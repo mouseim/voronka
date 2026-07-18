@@ -1,16 +1,13 @@
 import { ArrowDown, ArrowUp, Link2, Plus, Trash2, X } from 'lucide-react'
-import { newId, nodeTitle } from '../model/funnel'
+import type { ReactNode } from 'react'
+import { emptyConditionGroup, newId, nodeHandles, nodeTitle } from '../model/funnel'
 import type {
-  ChoiceData,
-  EndData,
-  FunnelDocument,
-  FunnelNode,
-  MediaData,
-  MessageData,
-  NodeOption,
-  QuestionData,
-  StartData,
-  TimerData,
+  ChoiceData, ConditionBranch, ConditionData, ConditionGroup, ConditionOperator,
+  ConsentData, EndData, ExternalLinkData, FormData, FormField, FormulaData,
+  FormulaExpression, FunnelDocument, FunnelNode, MediaData, MessageButton, MessageData,
+  NodeOption, ProductBlockData, QuestionData, RandomData, ReminderData, ResultBlockData,
+  SetVariableData, StartData, SubFunnelData, TestBlockData, TimerData, VariableAction,
+  WaitUntilData,
 } from '../model/types'
 import { useEditorStore } from '../store/editor'
 import { MediaRegistry } from './MediaRegistry'
@@ -27,26 +24,14 @@ export function PropertiesPanel({ document, activeTab, onTabChange, onCloseMobil
   const selectedNodeId = useEditorStore((state) => state.selectedNodeId)
   const selectNode = useEditorStore((state) => state.selectNode)
   const selected = document.nodes.find((node) => node.id === selectedNodeId)
-  return (
-    <aside className="side-panel properties-panel">
-      <div className="panel-tabs">
-        <button className={activeTab === 'properties' ? 'active' : ''} onClick={() => onTabChange('properties')}>Свойства</button>
-        <button className={activeTab === 'media' ? 'active' : ''} onClick={() => onTabChange('media')}>Медиа <span>{document.nodes.filter((node) => node.type === 'media').length}</span></button>
-        {onCloseMobile && <button className="icon-button mobile-panel-close" onClick={onCloseMobile} aria-label="Закрыть панель"><X size={18} /></button>}
-      </div>
-      {activeTab === 'media' ? (
-        <MediaRegistry document={document} onSelect={(id) => { selectNode(id); onTabChange('properties') }} />
-      ) : selected ? (
-        <NodeProperties document={document} node={selected} />
-      ) : (
-        <div className="panel-empty">
-          <div className="panel-empty__visual"><Link2 size={30} /></div>
-          <h3>Выберите блок</h3>
-          <p>Нажмите на блок на полотне, чтобы изменить его текст, настройки и переходы.</p>
-        </div>
-      )}
-    </aside>
-  )
+  return <aside className="side-panel properties-panel">
+    <div className="panel-tabs">
+      <button className={activeTab === 'properties' ? 'active' : ''} onClick={() => onTabChange('properties')}>Свойства</button>
+      <button className={activeTab === 'media' ? 'active' : ''} onClick={() => onTabChange('media')}>Медиа <span>{document.assets.length}</span></button>
+      {onCloseMobile && <button className="icon-button mobile-panel-close" onClick={onCloseMobile} aria-label="Закрыть панель"><X size={18} /></button>}
+    </div>
+    {activeTab === 'media' ? <MediaRegistry document={document} onSelect={(id) => { selectNode(id); onTabChange('properties') }} /> : selected ? <NodeProperties document={document} node={selected} /> : <div className="panel-empty"><div className="panel-empty__visual"><Link2 size={30} /></div><h3>Выберите блок</h3><p>Нажмите на блок на полотне, чтобы изменить его настройки и переходы.</p></div>}
+  </aside>
 }
 
 function NodeProperties({ document, node }: { document: FunnelDocument; node: FunnelNode }) {
@@ -56,147 +41,148 @@ function NodeProperties({ document, node }: { document: FunnelDocument; node: Fu
   const meta = nodeMeta[node.type]
   const Icon = meta.icon
   const setData = (patch: Record<string, unknown>) => updateNode(node.id, (draft) => { draft.data = { ...draft.data, ...patch } as FunnelNode['data'] })
-  const nextEdges = document.edges.filter((edge) => edge.source === node.id)
-  const targetTitle = (handle = 'next') => {
-    const edge = nextEdges.find((candidate) => (candidate.sourceHandle ?? 'next') === handle)
+  const targetTitle = (handle: string) => {
+    const edge = document.edges.find((candidate) => candidate.source === node.id && (candidate.sourceHandle ?? 'next') === handle)
     const target = document.nodes.find((candidate) => candidate.id === edge?.target)
     return target ? nodeTitle(target) : 'Не настроен'
   }
-
   const confirmDelete = () => {
     if (node.type === 'start') return
-    if (window.confirm(`Удалить блок «${nodeTitle(node)}» и все его связи?`)) deleteNode(node.id)
+    const connections = document.edges.filter((edge) => edge.source === node.id || edge.target === node.id).length
+    if (window.confirm(`Удалить блок «${nodeTitle(node)}»${connections ? ` и ${connections} связанных переходов` : ''}?`)) deleteNode(node.id)
   }
+  return <div className="properties-scroll">
+    <div className="properties-heading"><span className="node-type-icon large" style={{ color: meta.color, background: meta.background }}><Icon size={20} /></span><div><span className="eyebrow">{meta.label}</span><h2>{nodeTitle(node)}</h2></div></div>
+    <div className="property-id"><span>ID блока</span><code>{node.id}</code></div>
+    <Field label="Название блока" required><input value={node.data.title} onChange={(event) => setData({ title: event.target.value })} /></Field>
+    {!['comment','group'].includes(node.type) && <Toggle checked={node.data.enabled !== false} onChange={(enabled) => setData({ enabled })} title="Блок включён" hint="Выключение сохраняет ID и настройки" />}
 
-  return (
-    <div className="properties-scroll">
-      <div className="properties-heading">
-        <span className="node-type-icon large" style={{ color: meta.color, background: meta.background }}><Icon size={20} /></span>
-        <div><span className="eyebrow">{meta.label}</span><h2>{nodeTitle(node)}</h2></div>
-      </div>
-      <div className="property-id"><span>ID блока</span><code>{node.id}</code></div>
-      <Field label="Название блока" required>
-        <input value={String(node.data.title)} onChange={(event) => setData({ title: event.target.value })} />
-      </Field>
+    {node.type === 'start' && <StartFields data={node.data as StartData} setData={setData} />}
+    {node.type === 'message' && <MessageFields node={node} data={node.data as MessageData} updateDocument={updateDocument} />}
+    {node.type === 'choice' && <ChoiceFields node={node} data={node.data as ChoiceData} updateDocument={updateDocument} />}
+    {node.type === 'question' && <QuestionFields node={node} data={node.data as QuestionData} updateDocument={updateDocument} />}
+    {node.type === 'test' && <TestFields document={document} data={node.data as TestBlockData} setData={setData} />}
+    {node.type === 'condition' && <ConditionFields document={document} node={node} data={node.data as ConditionData} updateDocument={updateDocument} />}
+    {node.type === 'set_variable' && <VariableActionFields document={document} data={node.data as SetVariableData} setData={setData} />}
+    {node.type === 'formula' && <FormulaFields document={document} data={node.data as FormulaData} setData={setData} />}
+    {node.type === 'timer' && <TimerFields data={node.data as TimerData} setData={setData} />}
+    {node.type === 'wait_until' && <WaitFields data={node.data as WaitUntilData} setData={setData} />}
+    {node.type === 'reminder' && <ReminderFields data={node.data as ReminderData} setData={setData} />}
+    {node.type === 'media' && <MediaFields document={document} data={node.data as MediaData} setData={setData} />}
+    {node.type === 'form' && <FormFields document={document} data={node.data as FormData} setData={setData} />}
+    {node.type === 'consent' && <ConsentFields document={document} data={node.data as ConsentData} setData={setData} />}
+    {node.type === 'result' && <ResultFields document={document} data={node.data as ResultBlockData} setData={setData} />}
+    {node.type === 'product' && <ProductFields document={document} data={node.data as ProductBlockData} setData={setData} />}
+    {node.type === 'external_link' && <ExternalLinkFields data={node.data as ExternalLinkData} setData={setData} />}
+    {node.type === 'random' && <RandomFields node={node} data={node.data as RandomData} updateDocument={updateDocument} />}
+    {node.type === 'sub_funnel' && <SubFunnelFields document={document} data={node.data as SubFunnelData} setData={setData} />}
+    {node.type === 'end' && <EndFields document={document} data={node.data as EndData} setData={setData} />}
+    {node.type === 'comment' && <CommentFields data={node.data as { text: string; color: string }} setData={setData} />}
+    {node.type === 'group' && <GroupFields document={document} data={node.data as { color: string; collapsed: boolean; childNodeIds: string[] }} setData={setData} />}
 
-      {node.type === 'start' && <StartFields data={node.data as StartData} setData={setData} />}
-      {node.type === 'message' && <MessageFields data={node.data as MessageData} setData={setData} />}
-      {node.type === 'choice' && <OptionFields node={node} kind="choice" options={(node.data as ChoiceData).options} updateDocument={updateDocument} />}
-      {node.type === 'question' && <QuestionFields node={node} data={node.data as QuestionData} setData={setData} updateDocument={updateDocument} />}
-      {node.type === 'timer' && <TimerFields data={node.data as TimerData} setData={setData} />}
-      {node.type === 'media' && <MediaFields data={node.data as MediaData} setData={setData} />}
-      {node.type === 'end' && <EndFields data={node.data as EndData} setData={setData} />}
-
-      {node.type === 'choice' && <Field label="Текст перед кнопками" required><textarea rows={3} value={(node.data as ChoiceData).prompt} onChange={(event) => setData({ prompt: event.target.value })} /></Field>}
-
-      {node.type !== 'end' && (
-        <div className="connection-summary">
-          <div className="section-label"><Link2 size={15} /> Переходы</div>
-          {['choice', 'question'].includes(node.type) ? (
-            ((node.type === 'choice' ? (node.data as ChoiceData).options : (node.data as QuestionData).answers)).map((option) => (
-              <div className="connection-row" key={option.id}><span>{option.text || 'Без текста'}</span><strong className={targetTitle(option.id) === 'Не настроен' ? 'muted' : ''}>{targetTitle(option.id)}</strong></div>
-            ))
-          ) : <div className="connection-row"><span>Следующий блок</span><strong className={targetTitle() === 'Не настроен' ? 'muted' : ''}>{targetTitle()}</strong></div>}
-          <small>Соедините порты блоков стрелкой на полотне.</small>
-        </div>
-      )}
-
-      <div className="properties-footer">
-        <button className="button danger ghost" disabled={node.type === 'start'} onClick={confirmDelete}><Trash2 size={16} /> {node.type === 'start' ? 'Старт нельзя удалить' : 'Удалить блок'}</button>
-      </div>
-    </div>
-  )
-}
-
-function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
-  return <label className="field"><span>{label}{required && <b>*</b>}</span>{children}{hint && <small>{hint}</small>}</label>
-}
-
-function StartFields({ data, setData }: { data: StartData; setData: (patch: Record<string, unknown>) => void }) {
-  return <Field label="Описание для администратора"><textarea rows={4} value={data.note} onChange={(event) => setData({ note: event.target.value })} /></Field>
-}
-
-function MessageFields({ data, setData }: { data: MessageData; setData: (patch: Record<string, unknown>) => void }) {
-  return <>
-    <Field label="Текст сообщения" required><textarea rows={6} value={data.text} onChange={(event) => setData({ text: event.target.value })} /></Field>
-    <Field label="Внутреннее примечание"><textarea rows={3} value={data.note} onChange={(event) => setData({ note: event.target.value })} /></Field>
-    <label className="switch-row"><input type="checkbox" checked={data.continueEnabled} onChange={(event) => setData({ continueEnabled: event.target.checked })} /><span><strong>Кнопка «Продолжить»</strong><small>Показать кнопку под сообщением</small></span></label>
-    {data.continueEnabled && <Field label="Текст кнопки" required><input value={data.buttonText} onChange={(event) => setData({ buttonText: event.target.value })} /></Field>}
-  </>
-}
-
-function QuestionFields({ node, data, setData, updateDocument }: { node: FunnelNode; data: QuestionData; setData: (patch: Record<string, unknown>) => void; updateDocument: (update: (draft: FunnelDocument) => void) => void }) {
-  return <>
-    <Field label="Текст вопроса" required><textarea rows={4} value={data.question} onChange={(event) => setData({ question: event.target.value })} /></Field>
-    <OptionFields node={node} kind="question" options={data.answers} updateDocument={updateDocument} />
-  </>
-}
-
-function OptionFields({ node, kind, options, updateDocument }: { node: FunnelNode; kind: 'choice' | 'question'; options: NodeOption[]; updateDocument: (update: (draft: FunnelDocument) => void) => void }) {
-  const min = kind === 'choice' ? 1 : 2
-  const key = kind === 'choice' ? 'options' : 'answers'
-  const updateOptions = (next: NodeOption[], removedId?: string) => updateDocument((draft) => {
-    const target = draft.nodes.find((candidate) => candidate.id === node.id)
-    if (target) target.data = { ...target.data, [key]: next } as FunnelNode['data']
-    if (removedId) draft.edges = draft.edges.filter((edge) => !(edge.source === node.id && edge.sourceHandle === removedId))
-  })
-  const move = (index: number, direction: -1 | 1) => {
-    const target = index + direction
-    if (target < 0 || target >= options.length) return
-    const next = [...options]
-    ;[next[index], next[target]] = [next[target], next[index]]
-    updateOptions(next)
-  }
-  return <div className="options-editor">
-    <div className="section-label"><span>{kind === 'choice' ? 'Кнопки' : 'Варианты ответа'}</span><b>{options.length}/8</b></div>
-    {options.map((option, index) => (
-      <div className="option-editor" key={option.id}>
-        <div className="option-editor__top"><span>{index + 1}</span><input value={option.text} onChange={(event) => updateOptions(options.map((item) => item.id === option.id ? { ...item, text: event.target.value } : item))} placeholder="Текст варианта" /></div>
-        {kind === 'question' && <input className="score-input" value={scoresToText(option.scores)} onChange={(event) => updateOptions(options.map((item) => item.id === option.id ? { ...item, scores: textToScores(event.target.value) } : item))} placeholder="Баллы: sales: 3, growth: 1" title="Произвольные шкалы в формате шкала: баллы" />}
-        <div className="option-actions">
-          <code title="Устойчивый ID варианта">{option.id.slice(0, 18)}</code>
-          <button className="mini-icon" onClick={() => move(index, -1)} disabled={index === 0} title="Выше"><ArrowUp size={14} /></button>
-          <button className="mini-icon" onClick={() => move(index, 1)} disabled={index === options.length - 1} title="Ниже"><ArrowDown size={14} /></button>
-          <button className="mini-icon danger" onClick={() => updateOptions(options.filter((item) => item.id !== option.id), option.id)} disabled={options.length <= min} title="Удалить"><Trash2 size={14} /></button>
-        </div>
-      </div>
-    ))}
-    <button className="button secondary full" disabled={options.length >= 8} onClick={() => updateOptions([...options, { id: newId(kind === 'choice' ? 'option' : 'answer'), text: `${kind === 'choice' ? 'Вариант' : 'Ответ'} ${options.length + 1}` }])}><Plus size={16} /> Добавить {kind === 'choice' ? 'кнопку' : 'ответ'}</button>
+    {!['comment','group'].includes(node.type) && <CommonFields node={node} setData={setData} />}
+    {!!nodeHandles(node).length && <div className="connection-summary"><div className="section-label"><Link2 size={15} /> Переходы</div>{nodeHandles(node).map((handle) => <div className="connection-row" key={handle.id}><span>{handle.label}</span><strong className={targetTitle(handle.id) === 'Не настроен' ? 'muted' : ''}>{targetTitle(handle.id)}</strong></div>)}<small>Соедините порты блоков стрелкой на полотне.</small></div>}
+    <div className="properties-footer"><button className="button danger ghost" disabled={node.type === 'start'} onClick={confirmDelete}><Trash2 size={16} /> {node.type === 'start' ? 'Старт нельзя удалить' : 'Удалить блок'}</button></div>
   </div>
 }
 
-function TimerFields({ data, setData }: { data: TimerData; setData: (patch: Record<string, unknown>) => void }) {
-  return <>
-    <div className="field-pair"><Field label="Значение" required><input type="number" min="1" step="1" value={data.duration} onChange={(event) => setData({ duration: Number(event.target.value) })} /></Field><Field label="Единица"><select value={data.unit} onChange={(event) => setData({ unit: event.target.value })}><option value="minutes">Минуты</option><option value="hours">Часы</option><option value="days">Дни</option></select></Field></div>
-    <Field label="Пояснение для администратора"><textarea rows={3} value={data.note} onChange={(event) => setData({ note: event.target.value })} /></Field>
-  </>
+function CommonFields({ node, setData }: { node: FunnelNode; setData: Setter }) {
+  return <div className="advanced-common"><Field label="Примечание администратора"><textarea rows={3} value={node.data.note ?? ''} onChange={(event) => setData({ note: event.target.value })} /></Field><Field label="Аналитические теги" hint="Через запятую"><input value={(node.data.analyticsTags ?? []).join(', ')} onChange={(event) => setData({ analyticsTags: event.target.value.split(',').map((item) => item.trim()).filter(Boolean) })} /></Field><Field label="A/B-группа"><input value={node.data.abGroup ?? ''} onChange={(event) => setData({ abGroup: event.target.value })} placeholder="Например A" /></Field></div>
 }
 
-function MediaFields({ data, setData }: { data: MediaData; setData: (patch: Record<string, unknown>) => void }) {
-  return <>
-    <Field label="Логический ключ assetKey" required hint="Уникальный ключ без пробелов, например gift_day_1_voice"><input className="mono" value={data.assetKey} onChange={(event) => setData({ assetKey: event.target.value.trim().replace(/\s+/g, '_') })} placeholder="gift_day_1_voice" /></Field>
-    <Field label="Отображаемое имя" required><input value={data.displayName} onChange={(event) => setData({ displayName: event.target.value })} placeholder="Голосовое первого дня" /></Field>
-    <Field label="Ожидаемый тип"><select value={data.expectedType} onChange={(event) => setData({ expectedType: event.target.value })}><option value="image">Изображение</option><option value="video">Видео</option><option value="audio">Аудио</option><option value="voice">Голосовое сообщение</option><option value="video_note">Видеокружок</option><option value="document">Документ</option></select></Field>
-    <Field label="Подпись"><textarea rows={3} value={data.caption} onChange={(event) => setData({ caption: event.target.value })} /></Field>
-    <label className="switch-row"><input type="checkbox" checked={data.required} onChange={(event) => setData({ required: event.target.checked })} /><span><strong>Файл обязателен</strong><small>Бот не сможет опубликовать воронку без него</small></span></label>
-  </>
+type Setter = (patch: Record<string, unknown>) => void
+type DocUpdater = (update: (draft: FunnelDocument) => void) => void
+
+function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: ReactNode }) {
+  return <label className="field"><span>{label}{required && <b>*</b>}</span>{children}{hint && <small>{hint}</small>}</label>
 }
 
-function EndFields({ data, setData }: { data: EndData; setData: (patch: Record<string, unknown>) => void }) {
-  return <><Field label="Финальный текст" required><textarea rows={6} value={data.text} onChange={(event) => setData({ text: event.target.value })} /></Field><Field label="Внутреннее примечание"><textarea rows={3} value={data.note} onChange={(event) => setData({ note: event.target.value })} /></Field></>
+function Toggle({ checked, onChange, title, hint }: { checked: boolean; onChange: (checked: boolean) => void; title: string; hint?: string }) {
+  return <label className="switch-row"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} /><span><strong>{title}</strong>{hint && <small>{hint}</small>}</span></label>
 }
 
-function scoresToText(scores: NodeOption['scores']) {
-  return scores ? Object.entries(scores).map(([key, value]) => `${key}: ${value}`).join(', ') : ''
+function StartFields({ data, setData }: { data: StartData; setData: Setter }) {
+  return <><Field label="Ключ точки входа" required><input className="mono" value={data.entryKey} onChange={(event) => setData({ entryKey: technical(event.target.value) })} /></Field><Field label="Ожидаемые source / UTM"><textarea rows={3} value={data.sourceDescription} onChange={(event) => setData({ sourceDescription: event.target.value })} /></Field><Field label="Повторный вход"><select value={data.reentryPolicy} onChange={(event) => setData({ reentryPolicy: event.target.value })}><option value="continue">Продолжить сессию</option><option value="restart">Начать заново</option><option value="show_result">Показать результат</option><option value="branch">Отдельная ветка</option></select></Field></>
 }
 
-function textToScores(value: string) {
-  const result: Record<string, number> = {}
-  value.split(',').forEach((part) => {
-    const [rawKey, rawValue] = part.split(':')
-    const key = rawKey?.trim()
-    const score = Number(rawValue?.trim())
-    if (key && Number.isFinite(score)) result[key] = score
-  })
-  return result
+function MessageFields({ node, data, updateDocument }: { node: FunnelNode; data: MessageData; updateDocument: DocUpdater }) {
+  const set = (patch: Partial<MessageData>) => updateDocument((draft) => { const target = draft.nodes.find((item) => item.id === node.id); if (target) target.data = { ...target.data, ...patch } as FunnelNode['data'] })
+  const updateButtons = (buttons: MessageButton[], removedId?: string) => updateDocument((draft) => { const target = draft.nodes.find((item) => item.id === node.id); if (target) target.data = { ...target.data, buttons } as FunnelNode['data']; if (removedId) draft.edges = draft.edges.filter((edge) => !(edge.source === node.id && edge.sourceHandle === removedId)) })
+  return <><Field label="Текст сообщения" required hint="Поддерживаются Markdown и {{переменные}}"><textarea rows={7} value={data.text} onChange={(event) => set({ text: event.target.value })} /></Field><Field label="Формат"><select value={data.parseMode} onChange={(event) => set({ parseMode: event.target.value as MessageData['parseMode'] })}><option value="markdown">Безопасный Markdown</option><option value="plain">Обычный текст</option></select></Field><div className="section-label"><span>Кнопки</span><b>{data.buttons.length}/8</b></div>{data.buttons.map((button, index) => <div className="option-editor" key={button.id}><div className="option-editor__top"><span>{index + 1}</span><input value={button.text} onChange={(event) => updateButtons(data.buttons.map((item) => item.id === button.id ? { ...item, text: event.target.value } : item))} /></div><select className="compact-select" value={button.action} onChange={(event) => updateButtons(data.buttons.map((item) => item.id === button.id ? { ...item, action: event.target.value as MessageButton['action'] } : item))}><option value="transition">Переход</option><option value="url">Открыть URL</option><option value="product">Оплата продукта</option><option value="funnel">Другая воронка</option><option value="set_variable">Записать переменную</option></select>{button.action === 'url' && <input className="compact-input" value={button.url ?? ''} onChange={(event) => updateButtons(data.buttons.map((item) => item.id === button.id ? { ...item, url: event.target.value } : item))} placeholder="https://" />}<OptionActions index={index} items={data.buttons} onChange={updateButtons} onRemove={() => updateButtons(data.buttons.filter((item) => item.id !== button.id), button.id)} min={0} /></div>)}<button className="button secondary full" disabled={data.buttons.length >= 8} onClick={() => updateButtons([...data.buttons, { id:newId('button'), text:'Новая кнопка', value:'button', enabled:true, style:'primary', scoring:[], action:'transition' }])}><Plus size={16} /> Добавить кнопку</button><Toggle checked={data.continueWithoutButton} onChange={(value) => set({ continueWithoutButton: value })} title="Продолжать без кнопки" hint="Следующий блок будет отправлен автоматически" /></>
 }
+
+function ChoiceFields({ node, data, updateDocument }: { node: FunnelNode; data: ChoiceData; updateDocument: DocUpdater }) {
+  const set = (patch: Partial<ChoiceData>) => updateDocument((draft) => { const target = draft.nodes.find((item) => item.id === node.id); if (target) target.data = { ...target.data, ...patch } as FunnelNode['data'] })
+  return <><Field label="Текст перед вариантами" required><textarea rows={4} value={data.prompt} onChange={(event) => set({ prompt: event.target.value })} /></Field><Field label="Режим"><select value={data.selectionMode} onChange={(event) => set({ selectionMode: event.target.value as ChoiceData['selectionMode'], maxSelected: event.target.value === 'single' ? 1 : Math.max(2, data.maxSelected) })}><option value="single">Одиночный выбор</option><option value="multiple">Множественный выбор</option></select></Field>{data.selectionMode === 'multiple' && <div className="field-pair"><Field label="Минимум"><input type="number" min="1" value={data.minSelected} onChange={(event) => set({ minSelected: Number(event.target.value) })} /></Field><Field label="Максимум"><input type="number" min="1" value={data.maxSelected} onChange={(event) => set({ maxSelected: Number(event.target.value) })} /></Field></div>}<OptionList node={node} options={data.options} field="options" updateDocument={updateDocument} min={1} max={20} allowScores /><Toggle checked={data.shuffle} onChange={(value) => set({ shuffle:value })} title="Перемешивать варианты" /><Toggle checked={data.sharedTransition} onChange={(value) => set({ sharedTransition:value })} title="Общий переход после подтверждения" />{data.sharedTransition && <Field label="Текст подтверждения"><input value={data.confirmText} onChange={(event) => set({ confirmText:event.target.value })} /></Field>}<Toggle checked={data.allowOther} onChange={(value) => set({ allowOther:value })} title="Разрешить вариант «Другое»" /><Field label="Сохранить в переменную"><input className="mono" value={data.variableKey ?? ''} onChange={(event) => set({ variableKey:event.target.value })} placeholder="choice_value" /></Field></>
+}
+
+function QuestionFields({ node, data, updateDocument }: { node: FunnelNode; data: QuestionData; updateDocument: DocUpdater }) {
+  const set = (patch: Partial<QuestionData>) => updateDocument((draft) => { const target = draft.nodes.find((item) => item.id === node.id); if (target) target.data = { ...target.data, ...patch } as FunnelNode['data'] })
+  const hasOptions = ['single_choice','multiple_choice','yes_no'].includes(data.inputType)
+  return <><Field label="Текст вопроса" required><textarea rows={4} value={data.question} onChange={(event) => set({ question:event.target.value })} /></Field><Field label="Вид ответа"><select value={data.inputType} onChange={(event) => set({ inputType:event.target.value as QuestionData['inputType'] })}>{[['single_choice','Один вариант'],['multiple_choice','Несколько вариантов'],['short_text','Короткий текст'],['long_text','Длинный текст'],['integer','Целое число'],['number','Дробное число'],['phone','Телефон'],['email','Email'],['date','Дата'],['time','Время'],['scale','Шкала'],['yes_no','Да / нет'],['telegram_contact','Будущий контакт Telegram']].map(([value,label]) => <option value={value} key={value}>{label}</option>)}</select></Field>{hasOptions && <OptionList node={node} options={data.answers} field="answers" updateDocument={updateDocument} min={data.inputType === 'yes_no' ? 2 : 1} max={20} allowScores />}<Toggle checked={data.required} onChange={(value) => set({ required:value })} title="Обязательный ответ" /><Field label="Переменная ответа"><input className="mono" value={data.variableKey ?? ''} onChange={(event) => set({ variableKey:event.target.value })} /></Field><Field label="Placeholder"><input value={data.placeholder ?? ''} onChange={(event) => set({ placeholder:event.target.value })} /></Field><div className="field-pair"><Field label="Мин. значение"><input type="number" value={data.minValue ?? ''} onChange={(event) => set({ minValue:event.target.value === '' ? undefined : Number(event.target.value) })} /></Field><Field label="Макс. значение"><input type="number" value={data.maxValue ?? ''} onChange={(event) => set({ maxValue:event.target.value === '' ? undefined : Number(event.target.value) })} /></Field></div><Field label="Безопасная проверка RegExp"><input className="mono" value={data.validationPattern ?? ''} onChange={(event) => set({ validationPattern:event.target.value })} /></Field><Field label="Текст ошибки"><input value={data.errorText ?? ''} onChange={(event) => set({ errorText:event.target.value })} /></Field><Field label="Число попыток"><input type="number" min="1" value={data.maxAttempts} onChange={(event) => set({ maxAttempts:Number(event.target.value) })} /></Field></>
+}
+
+function OptionList({ node, options, field, updateDocument, min, max, allowScores }: { node:FunnelNode; options:NodeOption[]; field:'options'|'answers'; updateDocument:DocUpdater; min:number; max:number; allowScores?:boolean }) {
+  const update = (next: NodeOption[], removedId?: string) => updateDocument((draft) => { const target=draft.nodes.find((item)=>item.id===node.id); if(target) target.data={...target.data,[field]:next} as FunnelNode['data']; if(removedId) draft.edges=draft.edges.filter((edge)=>!(edge.source===node.id&&edge.sourceHandle===removedId)) })
+  return <div className="options-editor"><div className="section-label"><span>Варианты</span><b>{options.length}/{max}</b></div>{options.map((item,index)=><div className="option-editor" key={item.id}><div className="option-editor__top"><span>{index+1}</span><input value={item.text} onChange={(event)=>update(options.map((entry)=>entry.id===item.id?{...entry,text:event.target.value}:entry))} /></div>{allowScores&&<input className="score-input" value={scoresToText(item)} onChange={(event)=>update(options.map((entry)=>entry.id===item.id?{...entry,scores:textToScores(event.target.value),scoring:scoresToActions(item.id,textToScores(event.target.value))}:entry))} placeholder="S1: 3, S2: -1" />}<Toggle checked={item.enabled!==false} onChange={(enabled)=>update(options.map((entry)=>entry.id===item.id?{...entry,enabled}:entry))} title="Вариант включён" /><OptionActions index={index} items={options} onChange={update} onRemove={()=>update(options.filter((entry)=>entry.id!==item.id),item.id)} min={min} /></div>)}<button className="button secondary full" disabled={options.length>=max} onClick={()=>update([...options,{id:newId('option'),text:`Вариант ${options.length+1}`,value:`option_${options.length+1}`,enabled:true,scoring:[]}])}><Plus size={16}/> Добавить вариант</button></div>
+}
+
+function OptionActions<T>({ index, items, onChange, onRemove, min }: { index:number; items:T[]; onChange:(items:T[])=>void; onRemove:()=>void; min:number }) {
+  const move=(direction:-1|1)=>{const target=index+direction;if(target<0||target>=items.length)return;const next=[...items];[next[index],next[target]]=[next[target],next[index]];onChange(next)}
+  return <div className="option-actions"><button className="mini-icon" onClick={()=>move(-1)} disabled={index===0} title="Выше"><ArrowUp size={14}/></button><button className="mini-icon" onClick={()=>move(1)} disabled={index===items.length-1} title="Ниже"><ArrowDown size={14}/></button><button className="mini-icon danger" onClick={onRemove} disabled={items.length<=min} title="Удалить"><Trash2 size={14}/></button></div>
+}
+
+function TestFields({ document, data, setData }: { document:FunnelDocument; data:TestBlockData; setData:Setter }) {
+  return <><Field label="Тест" required><select value={data.testId ?? ''} onChange={(event)=>setData({testId:event.target.value||undefined})}><option value="">Выберите тест</option>{document.tests.map((test)=><option value={test.id} key={test.id}>{test.name}</option>)}</select></Field><Field label="Приветственный текст"><textarea rows={3} value={data.welcomeText} onChange={(event)=>setData({welcomeText:event.target.value})}/></Field><Field label="Текст прогресса"><input value={data.progressText} onChange={(event)=>setData({progressText:event.target.value})}/></Field><Toggle checked={data.showQuestionNumber} onChange={(value)=>setData({showQuestionNumber:value})} title="Показывать номер вопроса"/><Toggle checked={data.allowBack} onChange={(value)=>setData({allowBack:value})} title="Разрешить возврат"/><Toggle checked={data.saveImmediately} onChange={(value)=>setData({saveImmediately:value})} title="Сохранять ответ сразу"/><Field label="Переменная результата"><input className="mono" value={data.resultVariableKey??''} onChange={(event)=>setData({resultVariableKey:event.target.value})}/></Field></>
+}
+
+function ConditionFields({ document, node, data, updateDocument }: { document:FunnelDocument; node:FunnelNode; data:ConditionData; updateDocument:DocUpdater }) {
+  const update=(branches:ConditionBranch[],removedId?:string)=>updateDocument((draft)=>{const target=draft.nodes.find((item)=>item.id===node.id);if(target)target.data={...target.data,branches} as FunnelNode['data'];if(removedId)draft.edges=draft.edges.filter((edge)=>!(edge.source===node.id&&edge.sourceHandle===removedId))})
+  return <div className="condition-editor"><p className="panel-help">Проверяется первая совпавшая ветка сверху вниз.</p>{data.branches.map((branch,index)=><div className={`condition-branch ${branch.isElse?'is-else':''}`} key={branch.id}><div className="branch-heading"><input value={branch.name} onChange={(event)=>update(data.branches.map((item)=>item.id===branch.id?{...item,name:event.target.value}:item))}/><span>{branch.isElse?'Всегда последняя':`Ветка ${index+1}`}</span></div>{!branch.isElse&&branch.condition&&<ConditionGroupEditor group={branch.condition} variables={document.variables.map((item)=>item.key)} onChange={(condition)=>update(data.branches.map((item)=>item.id===branch.id?{...item,condition}:item))}/>}<OptionActions index={index} items={data.branches} onChange={update} onRemove={()=>update(data.branches.filter((item)=>item.id!==branch.id),branch.id)} min={2}/></div>)}<button className="button secondary full" onClick={()=>{const elseIndex=data.branches.findIndex((item)=>item.isElse);const next=[...data.branches];next.splice(elseIndex<0?next.length:elseIndex,0,{id:newId('branch'),name:`Условие ${data.branches.length}`,isElse:false,condition:emptyConditionGroup()});update(next)}}><Plus size={16}/> Добавить ветку</button></div>
+}
+
+function ConditionGroupEditor({ group, variables, onChange, depth=0 }: { group:ConditionGroup; variables:string[]; onChange:(group:ConditionGroup)=>void; depth?:number }) {
+  const updateChild=(id:string,child:ConditionGroup|ConditionGroup['children'][number])=>onChange({...group,children:group.children.map((item)=>item.id===id?child:item)})
+  return <div className="condition-group"><div className="condition-group__head"><select value={group.logic} onChange={(event)=>onChange({...group,logic:event.target.value as 'and'|'or'})}><option value="and">И — все</option><option value="or">ИЛИ — любое</option></select><label><input type="checkbox" checked={group.not} onChange={(event)=>onChange({...group,not:event.target.checked})}/> НЕ</label></div>{group.children.map((child)=>child.kind==='group'?<div key={child.id}><ConditionGroupEditor group={child} variables={variables} depth={depth+1} onChange={(next)=>updateChild(child.id,next)}/><button className="mini-remove" onClick={()=>onChange({...group,children:group.children.filter((item)=>item.id!==child.id)})}>Удалить группу</button></div>:<div className="condition-rule" key={child.id}><select value={child.left.kind==='variable'?child.left.key:''} onChange={(event)=>updateChild(child.id,{...child,left:{kind:'variable',key:event.target.value}})}><option value="">Переменная</option><option value="source">source</option>{variables.map((key)=><option key={key} value={key}>{key}</option>)}</select><select value={child.operator} onChange={(event)=>updateChild(child.id,{...child,operator:event.target.value as ConditionOperator})}>{conditionOperators.map(([value,label])=><option value={value} key={value}>{label}</option>)}</select>{!['filled','empty','is_true','is_false','product_paid','product_not_paid'].includes(child.operator)&&<input value={child.right?.kind==='constant'?String(child.right.value??''):''} onChange={(event)=>updateChild(child.id,{...child,right:{kind:'constant',value:event.target.value,valueType:'string'}})} placeholder="Значение"/>}<button className="mini-icon danger" onClick={()=>onChange({...group,children:group.children.filter((item)=>item.id!==child.id)})}><Trash2 size={13}/></button></div>)}<div className="condition-adds"><button onClick={()=>onChange({...group,children:[...group.children,{id:newId('condition_rule'),kind:'rule',left:{kind:'variable',key:variables[0]??'source'},operator:'eq',right:{kind:'constant',value:'',valueType:'string'}}]})}>+ правило</button>{depth<2&&<button onClick={()=>onChange({...group,children:[...group.children,emptyConditionGroup()]})}>+ группа</button>}</div></div>
+}
+
+const conditionOperators:Array<[ConditionOperator,string]>=[['eq','равно'],['neq','не равно'],['gt','больше'],['gte','больше или равно'],['lt','меньше'],['lte','меньше или равно'],['contains','содержит'],['not_contains','не содержит'],['starts_with','начинается с'],['ends_with','заканчивается на'],['in','входит в список'],['not_in','не входит в список'],['filled','заполнено'],['empty','не заполнено'],['is_true','истина'],['is_false','ложь'],['date_before','дата раньше'],['date_after','дата позже'],['date_between','дата в диапазоне'],['number_between','число в диапазоне'],['result_is','код результата'],['product_paid','продукт оплачен'],['product_not_paid','не оплачен'],['source_is','источник равен']]
+
+function VariableActionFields({ document, data, setData }: { document:FunnelDocument; data:SetVariableData; setData:Setter }) {
+  const update=(actions:VariableAction[])=>setData({actions})
+  return <div><p className="panel-help">Действия выполняются последовательно сверху вниз.</p>{data.actions.map((action,index)=><div className="option-editor" key={action.id}><Field label="Действие"><select value={action.type} onChange={(event)=>update(data.actions.map((item)=>item.id===action.id?{...item,type:event.target.value as VariableAction['type']}:item))}>{[['assign','Присвоить'],['copy','Копировать'],['clear','Очистить'],['increment','Увеличить'],['decrement','Уменьшить'],['list_add','Добавить в список'],['list_remove','Удалить из списка'],['now','Текущее время'],['test_result','Результат теста'],['template','Строка по шаблону']].map(([value,label])=><option value={value} key={value}>{label}</option>)}</select></Field><Field label="Переменная"><select value={action.variableKey} onChange={(event)=>update(data.actions.map((item)=>item.id===action.id?{...item,variableKey:event.target.value}:item))}><option value="">Выберите</option>{document.variables.map((variable)=><option value={variable.key} key={variable.id}>{variable.name}</option>)}</select></Field>{['assign','increment','decrement','list_add','list_remove'].includes(action.type)&&<Field label="Значение"><input value={String(action.value??'')} onChange={(event)=>update(data.actions.map((item)=>item.id===action.id?{...item,value:event.target.value}:item))}/></Field>}{action.type==='copy'&&<Field label="Источник"><select value={action.sourceVariableKey??''} onChange={(event)=>update(data.actions.map((item)=>item.id===action.id?{...item,sourceVariableKey:event.target.value}:item))}>{document.variables.map((variable)=><option value={variable.key} key={variable.id}>{variable.name}</option>)}</select></Field>}{action.type==='template'&&<Field label="Шаблон"><textarea rows={2} value={action.template??''} onChange={(event)=>update(data.actions.map((item)=>item.id===action.id?{...item,template:event.target.value}:item))}/></Field>}<OptionActions index={index} items={data.actions} onChange={update} onRemove={()=>update(data.actions.filter((item)=>item.id!==action.id))} min={1}/></div>)}<button className="button secondary full" onClick={()=>update([...data.actions,{id:newId('action'),type:'assign',variableKey:'',value:''}])}><Plus size={16}/> Добавить действие</button></div>
+}
+
+function FormulaFields({ document, data, setData }: { document:FunnelDocument; data:FormulaData; setData:Setter }) {
+  return <><p className="panel-help">Формула хранится как безопасное дерево, а не строка кода.</p><FormulaExpressionEditor expression={data.expression} variables={document.variables.filter((item)=>item.type==='number').map((item)=>item.key)} onChange={(expression)=>setData({expression})}/><Field label="Записать результат"><select value={data.targetVariableKey??''} onChange={(event)=>setData({targetVariableKey:event.target.value||undefined})}><option value="">Не сохранять</option>{document.variables.filter((item)=>item.type==='number').map((variable)=><option value={variable.key} key={variable.id}>{variable.name}</option>)}</select></Field></>
+}
+
+function FormulaExpressionEditor({ expression, variables, onChange, depth=0 }: { expression:FormulaExpression; variables:string[]; onChange:(expression:FormulaExpression)=>void; depth?:number }) {
+  const changeKind=(kind:FormulaExpression['kind'])=>{if(kind==='number')onChange({id:expression.id,kind,value:0});if(kind==='variable')onChange({id:expression.id,kind,key:variables[0]??''});if(kind==='binary')onChange({id:expression.id,kind,operator:'+',left:{id:newId('expr'),kind:'number',value:0},right:{id:newId('expr'),kind:'number',value:0}});if(kind==='function')onChange({id:expression.id,kind,name:'round',args:[{id:newId('expr'),kind:'number',value:0}]})}
+  return <div className={`formula-expression depth-${depth}`}><select value={expression.kind} onChange={(event)=>changeKind(event.target.value as FormulaExpression['kind'])}><option value="number">Число</option><option value="variable">Переменная</option><option value="binary">Операция</option><option value="function">Функция</option></select>{expression.kind==='number'&&<input type="number" value={expression.value} onChange={(event)=>onChange({...expression,value:Number(event.target.value)})}/>} {expression.kind==='variable'&&<select value={expression.key} onChange={(event)=>onChange({...expression,key:event.target.value})}>{variables.map((key)=><option value={key} key={key}>{key}</option>)}</select>}{expression.kind==='binary'&&<><select value={expression.operator} onChange={(event)=>onChange({...expression,operator:event.target.value as '+'|'-'|'*'|'/'})}><option>+</option><option>-</option><option>*</option><option>/</option></select><FormulaExpressionEditor expression={expression.left} variables={variables} depth={depth+1} onChange={(left)=>onChange({...expression,left})}/><FormulaExpressionEditor expression={expression.right} variables={variables} depth={depth+1} onChange={(right)=>onChange({...expression,right})}/></>}{expression.kind==='function'&&<><select value={expression.name} onChange={(event)=>onChange({...expression,name:event.target.value as 'min'|'max'|'round'|'floor'|'ceil'})}><option value="min">min</option><option value="max">max</option><option value="round">round</option><option value="floor">floor</option><option value="ceil">ceil</option></select>{expression.args.map((arg,index)=><FormulaExpressionEditor key={arg.id} expression={arg} variables={variables} depth={depth+1} onChange={(next)=>onChange({...expression,args:expression.args.map((item,itemIndex)=>itemIndex===index?next:item)})}/>)}</>}</div>
+}
+
+function TimerFields({data,setData}:{data:TimerData;setData:Setter}){return <><div className="field-pair"><Field label="Значение"><input type="number" min="1" value={data.duration} onChange={(event)=>setData({duration:Number(event.target.value)})}/></Field><Field label="Единица"><select value={data.unit} onChange={(event)=>setData({unit:event.target.value})}><option value="seconds">Секунды</option><option value="minutes">Минуты</option><option value="hours">Часы</option><option value="days">Дни</option></select></Field></div><Field label="Отсчёт"><select value={data.from} onChange={(event)=>setData({from:event.target.value})}><option value="entry">От входа в блок</option><option value="system_event">От системного события</option></select></Field><Field label="Продолжение"><select value={data.continueMode} onChange={(event)=>setData({continueMode:event.target.value})}><option value="automatic">Автоматически</option><option value="button">По кнопке</option></select></Field><QuietHoursFields value={data.quietHours} onChange={(quietHours)=>setData({quietHours})}/></>}
+function WaitFields({data,setData}:{data:WaitUntilData;setData:Setter}){return <><Field label="Режим"><select value={data.mode} onChange={(event)=>setData({mode:event.target.value})}><option value="fixed">Фиксированная дата</option><option value="weekday">Ближайший день недели</option></select></Field>{data.mode==='fixed'?<Field label="Дата и время"><input type="datetime-local" value={data.dateTime?.slice(0,16)??''} onChange={(event)=>setData({dateTime:event.target.value})}/></Field>:<><Field label="День недели"><select value={data.weekday??1} onChange={(event)=>setData({weekday:Number(event.target.value)})}>{['Понедельник','Вторник','Среда','Четверг','Пятница','Суббота','Воскресенье'].map((label,index)=><option value={index+1} key={label}>{label}</option>)}</select></Field><Field label="Время"><input type="time" value={data.time} onChange={(event)=>setData({time:event.target.value})}/></Field></>}<Field label="Часовой пояс"><select value={data.timezoneMode} onChange={(event)=>setData({timezoneMode:event.target.value})}><option value="funnel">Воронки</option><option value="user">Пользователя</option></select></Field><Field label="Если время прошло"><select value={data.pastBehavior} onChange={(event)=>setData({pastBehavior:event.target.value})}><option value="immediate">Отправить сразу</option><option value="next_period">Следующий период</option><option value="skip">Пропустить</option></select></Field></>}
+function ReminderFields({data,setData}:{data:ReminderData;setData:Setter}){return <><Field label="Текст напоминания"><textarea rows={4} value={data.text} onChange={(event)=>setData({text:event.target.value})}/></Field><div className="field-pair"><Field label="Через"><input type="number" min="1" value={data.duration} onChange={(event)=>setData({duration:Number(event.target.value)})}/></Field><Field label="Единица"><UnitSelect value={data.unit} onChange={(unit)=>setData({unit})}/></Field></div><Field label="Максимум отправок"><input type="number" min="1" max="20" value={data.maxSends} onChange={(event)=>setData({maxSends:Number(event.target.value)})}/></Field><Toggle checked={data.background} onChange={(background)=>setData({background})} title="Фоновый режим" hint="Основной сценарий не ждёт напоминание"/><Field label="Ключ события"><input className="mono" value={data.eventKey} onChange={(event)=>setData({eventKey:technical(event.target.value)})}/></Field><QuietHoursFields value={data.quietHours} onChange={(quietHours)=>setData({quietHours})}/></>}
+function QuietHoursFields({value,onChange}:{value:TimerData['quietHours'];onChange:(value:TimerData['quietHours'])=>void}){return <div className="nested-settings"><Toggle checked={value.enabled} onChange={(enabled)=>onChange({...value,enabled})} title="Учитывать тихие часы"/>{value.enabled&&<div className="field-pair"><Field label="С"><input type="time" value={value.from} onChange={(event)=>onChange({...value,from:event.target.value})}/></Field><Field label="До"><input type="time" value={value.to} onChange={(event)=>onChange({...value,to:event.target.value})}/></Field></div>}</div>}
+function UnitSelect({value,onChange}:{value:TimerData['unit'];onChange:(value:TimerData['unit'])=>void}){return <select value={value} onChange={(event)=>onChange(event.target.value as TimerData['unit'])}><option value="seconds">Секунды</option><option value="minutes">Минуты</option><option value="hours">Часы</option><option value="days">Дни</option></select>}
+
+function MediaFields({document,data,setData}:{document:FunnelDocument;data:MediaData;setData:Setter}){return <><Field label="Ресурс из реестра" required><select value={data.assetId??''} onChange={(event)=>{const asset=document.assets.find((item)=>item.id===event.target.value);setData({assetId:asset?.id,assetKey:asset?.assetKey??''})}}><option value="">Выберите ресурс</option>{document.assets.map((asset)=><option value={asset.id} key={asset.id}>{asset.displayName} · {asset.expectedType}</option>)}</select></Field><Field label="Подпись"><textarea rows={4} value={data.caption} onChange={(event)=>setData({caption:event.target.value})}/></Field><Field label="Режим отправки"><select value={data.sendMode} onChange={(event)=>setData({sendMode:event.target.value})}><option value="single">Отдельно</option><option value="album">Альбом / группа</option></select></Field><Toggle checked={data.required} onChange={(required)=>setData({required})} title="Файл обязателен"/><Field label="Если файла нет"><select value={data.missingBehavior} onChange={(event)=>setData({missingBehavior:event.target.value})}><option value="placeholder">Текстовая заглушка</option><option value="skip">Пропустить</option><option value="block">Остановить проверку публикации</option></select></Field></>}
+
+function FormFields({document,data,setData}:{document:FunnelDocument;data:FormData;setData:Setter}){const update=(fields:FormField[])=>setData({fields});return <><Field label="Описание"><textarea rows={3} value={data.description} onChange={(event)=>setData({description:event.target.value})}/></Field><Field label="Тип записи"><select value={data.recordType} onChange={(event)=>setData({recordType:event.target.value})}><option value="contact">Контакт</option><option value="application">Заявка</option><option value="custom">Произвольная форма</option></select></Field><div className="section-label"><span>Поля формы</span><b>{data.fields.length}</b></div>{data.fields.map((field,index)=><div className="option-editor" key={field.id}><input className="compact-input" value={field.label} onChange={(event)=>update(data.fields.map((item)=>item.id===field.id?{...item,label:event.target.value}:item))}/><select className="compact-select" value={field.type} onChange={(event)=>update(data.fields.map((item)=>item.id===field.id?{...item,type:event.target.value as FormField['type']}:item))}>{['name','username','phone','email','short_text','long_text','number','date','choice','checkbox','consent','hidden'].map((value)=><option value={value} key={value}>{value}</option>)}</select><select className="compact-select" value={field.variableKey??''} onChange={(event)=>update(data.fields.map((item)=>item.id===field.id?{...item,variableKey:event.target.value}:item))}><option value="">Переменная</option>{document.variables.map((variable)=><option value={variable.key} key={variable.id}>{variable.name}</option>)}</select><Toggle checked={field.required} onChange={(required)=>update(data.fields.map((item)=>item.id===field.id?{...item,required}:item))} title="Обязательное"/><OptionActions index={index} items={data.fields} onChange={update} onRemove={()=>update(data.fields.filter((item)=>item.id!==field.id))} min={1}/></div>)}<button className="button secondary full" onClick={()=>update([...data.fields,{id:newId('field'),label:'Новое поле',type:'short_text',required:false}])}><Plus size={16}/> Добавить поле</button><Field label="Кнопка отправки"><input value={data.submitText} onChange={(event)=>setData({submitText:event.target.value})}/></Field><Toggle checked={data.consentRequired} onChange={(consentRequired)=>setData({consentRequired})} title="Требовать согласие"/></>}
+
+function ConsentFields({document,data,setData}:{document:FunnelDocument;data:ConsentData;setData:Setter}){return <><Field label="Текст согласия" required><textarea rows={6} value={data.text} onChange={(event)=>setData({text:event.target.value})}/></Field><Field label="Ссылка на политику"><input value={data.policyUrl??''} onChange={(event)=>setData({policyUrl:event.target.value})}/></Field><Field label="Версия согласия"><input value={data.consentVersion} onChange={(event)=>setData({consentVersion:event.target.value})}/></Field><Field label="Кнопка принятия"><input value={data.acceptText} onChange={(event)=>setData({acceptText:event.target.value})}/></Field><Toggle checked={data.declineEnabled} onChange={(declineEnabled)=>setData({declineEnabled})} title="Разрешить отказ"/>{data.declineEnabled&&<Field label="Кнопка отказа"><input value={data.declineText} onChange={(event)=>setData({declineText:event.target.value})}/></Field>}<Field label="Переменная"><select value={data.variableKey??''} onChange={(event)=>setData({variableKey:event.target.value||undefined})}><option value="">Не сохранять</option>{document.variables.filter((item)=>item.type==='boolean').map((variable)=><option value={variable.key} key={variable.id}>{variable.name}</option>)}</select></Field></>}
+function ResultFields({document,data,setData}:{document:FunnelDocument;data:ResultBlockData;setData:Setter}){return <><Field label="Набор результатов"><select value={data.resultSetId??''} onChange={(event)=>setData({resultSetId:event.target.value||undefined})}><option value="">Выберите</option>{document.resultSets.map((set)=><option value={set.id} key={set.id}>{set.name}</option>)}</select></Field><Field label="Шаблон одиночного"><textarea rows={3} value={data.singleTemplate} onChange={(event)=>setData({singleTemplate:event.target.value})}/></Field><Field label="Шаблон комбинированного"><textarea rows={3} value={data.combinedTemplate} onChange={(event)=>setData({combinedTemplate:event.target.value})}/></Field></>}
+function ProductFields({document,data,setData}:{document:FunnelDocument;data:ProductBlockData;setData:Setter}){return <><Field label="Продукт" required><select value={data.productId??''} onChange={(event)=>{const product=document.products.find((item)=>item.id===event.target.value);setData({productId:product?.id,displayPrice:product?`${(product.priceMinor/100).toLocaleString('ru-RU')} ${product.currency}`:data.displayPrice})}}><option value="">Выберите продукт</option>{document.products.map((product)=><option value={product.id} key={product.id}>{product.name}</option>)}</select></Field><Field label="Заголовок"><input value={data.headline} onChange={(event)=>setData({headline:event.target.value})}/></Field><Field label="Описание"><textarea rows={4} value={data.description} onChange={(event)=>setData({description:event.target.value})}/></Field><Field label="Отображаемая цена"><input value={data.displayPrice} onChange={(event)=>setData({displayPrice:event.target.value})}/></Field><Field label="Кнопка оплаты"><input value={data.payButtonText} onChange={(event)=>setData({payButtonText:event.target.value})}/></Field><Toggle checked={data.allowSkip} onChange={(allowSkip)=>setData({allowSkip})} title="Разрешить продолжить без покупки"/><p className="panel-help">Оплата только симулируется. ЮKassa не подключена.</p></>}
+function ExternalLinkFields({data,setData}:{data:ExternalLinkData;setData:Setter}){return <><Field label="URL" required><input value={data.url} onChange={(event)=>setData({url:event.target.value})}/></Field><Field label="Подпись кнопки"><input value={data.buttonText} onChange={(event)=>setData({buttonText:event.target.value})}/></Field><Field label="Тип"><select value={data.linkType} onChange={(event)=>setData({linkType:event.target.value})}><option value="website">Сайт</option><option value="channel">Канал</option><option value="contact">Контакт</option><option value="bot">Другой бот</option><option value="document">Документ</option></select></Field><Toggle checked={data.openExternal} onChange={(openExternal)=>setData({openExternal})} title="Открывать во внешнем приложении"/></>}
+function RandomFields({node,data,updateDocument}:{node:FunnelNode;data:RandomData;updateDocument:DocUpdater}){const update=(branches:RandomData['branches'],removedId?:string)=>updateDocument((draft)=>{const target=draft.nodes.find((item)=>item.id===node.id);if(target)target.data={...target.data,branches} as FunnelNode['data'];if(removedId)draft.edges=draft.edges.filter((edge)=>!(edge.source===node.id&&edge.sourceHandle===removedId))});return <><div className="section-label"><span>Ветки и веса</span><b>{data.branches.reduce((sum,item)=>sum+item.weight,0)}</b></div>{data.branches.map((branch,index)=><div className="option-editor" key={branch.id}><div className="option-editor__top"><span>{index+1}</span><input value={branch.name} onChange={(event)=>update(data.branches.map((item)=>item.id===branch.id?{...item,name:event.target.value}:item))}/><input type="number" min="1" value={branch.weight} onChange={(event)=>update(data.branches.map((item)=>item.id===branch.id?{...item,weight:Number(event.target.value)}:item))}/></div><OptionActions index={index} items={data.branches} onChange={update} onRemove={()=>update(data.branches.filter((item)=>item.id!==branch.id),branch.id)} min={2}/></div>)}<button className="button secondary full" disabled={data.branches.length>=10} onClick={()=>update([...data.branches,{id:newId('branch'),name:`Вариант ${data.branches.length+1}`,weight:1}])}><Plus size={16}/> Добавить ветку</button></>}
+function SubFunnelFields({document,data,setData}:{document:FunnelDocument;data:SubFunnelData;setData:Setter}){return <><Field label="Ключ целевой воронки" required><input className="mono" value={data.targetFunnelKey} onChange={(event)=>setData({targetFunnelKey:technical(event.target.value)})}/></Field><Field label="Точка входа"><input className="mono" value={data.targetEntryKey} onChange={(event)=>setData({targetEntryKey:technical(event.target.value)})}/></Field><Field label="Передаваемые переменные"><select multiple value={data.variableKeys} onChange={(event)=>setData({variableKeys:Array.from(event.target.selectedOptions).map((option)=>option.value)})}>{document.variables.filter((item)=>item.transferable).map((variable)=><option value={variable.key} key={variable.id}>{variable.name}</option>)}</select></Field><Field label="Если воронка не установлена"><select value={data.missingBehavior} onChange={(event)=>setData({missingBehavior:event.target.value})}><option value="finish">Завершить текущую</option><option value="error">Показать ошибку</option></select></Field></>}
+function EndFields({document,data,setData}:{document:FunnelDocument;data:EndData;setData:Setter}){return <><Field label="Финальный текст" required><textarea rows={6} value={data.text} onChange={(event)=>setData({text:event.target.value})}/></Field><Field label="Код причины"><input className="mono" value={data.reasonCode} onChange={(event)=>setData({reasonCode:technical(event.target.value)})}/></Field><Field label="Статус сессии"><select value={data.sessionStatus} onChange={(event)=>setData({sessionStatus:event.target.value})}><option value="completed">Завершена</option><option value="cancelled">Отменена</option><option value="opted_out">Отписка</option><option value="external">Внешний переход</option></select></Field><Field label="Очистить переменные"><select multiple value={data.clearVariableKeys} onChange={(event)=>setData({clearVariableKeys:Array.from(event.target.selectedOptions).map((option)=>option.value)})}>{document.variables.map((variable)=><option value={variable.key} key={variable.id}>{variable.name}</option>)}</select></Field></>}
+function CommentFields({data,setData}:{data:{text:string;color:string};setData:Setter}){return <><Field label="Комментарий"><textarea rows={8} value={data.text} onChange={(event)=>setData({text:event.target.value})}/></Field><Field label="Цвет"><input type="color" value={data.color} onChange={(event)=>setData({color:event.target.value})}/></Field></>}
+function GroupFields({document,data,setData}:{document:FunnelDocument;data:{color:string;collapsed:boolean;childNodeIds:string[]};setData:Setter}){return <><Field label="Цвет"><input type="color" value={data.color} onChange={(event)=>setData({color:event.target.value})}/></Field><Toggle checked={data.collapsed} onChange={(collapsed)=>setData({collapsed})} title="Группа свернута"/><Field label="Блоки группы"><select multiple value={data.childNodeIds} onChange={(event)=>setData({childNodeIds:Array.from(event.target.selectedOptions).map((option)=>option.value)})}>{document.nodes.filter((node)=>!['group','comment'].includes(node.type)).map((node)=><option value={node.id} key={node.id}>{nodeTitle(node)}</option>)}</select></Field></>}
+
+function scoresToText(option:NodeOption){const map=option.scores??Object.fromEntries((option.scoring??[]).filter((item)=>item.scaleId&&['add','subtract'].includes(item.type)).map((item)=>[item.scaleId!,item.type==='subtract'?-Number(item.value??0):Number(item.value??0)]));return Object.entries(map).map(([key,value])=>`${key}: ${value}`).join(', ')}
+function textToScores(value:string){const result:Record<string,number>={};value.split(',').forEach((part)=>{const [keyText,valueText]=part.split(':');const key=keyText?.trim();const score=Number(valueText?.trim());if(key&&Number.isFinite(score))result[key]=score});return result}
+function scoresToActions(id:string,scores:Record<string,number>){return Object.entries(scores).map(([scaleId,value],index)=>({id:`score_${id}_${index}`,type:value>=0?'add' as const:'subtract' as const,scaleId,value:Math.abs(value)}))}
+function technical(value:string){return value.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g,'_')}

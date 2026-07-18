@@ -3,6 +3,8 @@ dist
 .DS_Store
 *.local
 coverage
+test-results
+playwright-report
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts

@@ -1,0 +1,59 @@
+{
+  "documentType": "funnel",
+  "schemaVersion": "0.1.0",
+  "project": {
+    "id": "project_fixture_mvp",
+    "name": "Диагностика продукта — fixture MVP",
+    "description": "Сохранённый пример старой схемы для проверки миграции"
+  },
+  "funnel": {
+    "id": "funnel_fixture_mvp",
+    "name": "Диагностика продукта",
+    "version": 1,
+    "status": "draft",
+    "startNodeId": "fixture_start",
+    "createdAt": "2025-01-10T10:00:00.000Z",
+    "updatedAt": "2025-01-10T11:00:00.000Z"
+  },
+  "nodes": [
+    {
+      "id": "fixture_start",
+      "type": "start",
+      "position": { "x": 80, "y": 160 },
+      "data": { "title": "Старт", "note": "Старая точка входа" }
+    },
+    {
+      "id": "fixture_message",
+      "type": "message",
+      "position": { "x": 350, "y": 160 },
+      "data": {
+        "title": "Приветствие",
+        "text": "Это сохранённый файл MVP.",
+        "note": "",
+        "continueEnabled": true,
+        "buttonText": "Продолжить"
+      }
+    },
+    {
+      "id": "fixture_end",
+      "type": "end",
+      "position": { "x": 620, "y": 160 },
+      "data": { "title": "Конец", "text": "Готово", "note": "" }
+    }
+  ],
+  "edges": [
+    { "id": "fixture_edge_1", "source": "fixture_start", "target": "fixture_message", "sourceHandle": "next" },
+    { "id": "fixture_edge_2", "source": "fixture_message", "target": "fixture_end", "sourceHandle": "next" }
+  ],
+  "assets": [],
+  "analytics": {
+    "snapshotAt": null,
+    "funnelVersion": 1,
+    "summary": { "totalUsers": 0, "started": 0, "completed": 0 },
+    "nodes": {},
+    "edges": {},
+    "questions": {},
+    "contacts": [],
+    "applications": []
+  }
+}

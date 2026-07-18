@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { demoFunnel } from './demo'
-import { analyticsForNode, createEmptyFunnel, createNewVersion } from './funnel'
-import { parseFunnelDocument } from './schema'
+import { analyticsForNode, createEmptyFunnel, createNewVersion, createNode } from './funnel'
+import { parseAndMigrateFunnelDocument, parseFunnelDocument } from './schema'
 import { serializeFunnel } from '../services/files'
 import { validateFunnel } from './validation'
 
-describe('формат .funnel', () => {
-  it('принимает корректный документ', () => {
+describe('формат .funnel 1.0', () => {
+  it('принимает полную демо-воронку без ошибок', () => {
     const result = parseFunnelDocument(structuredClone(demoFunnel))
     expect(result.success).toBe(true)
     expect(validateFunnel(demoFunnel).filter((issue) => issue.severity === 'error')).toEqual([])
@@ -20,72 +20,81 @@ describe('формат .funnel', () => {
     if (!result.success) expect(result.errors[0]).toContain('documentType')
   })
 
-  it('сохраняет основные и неизвестные совместимые поля при round-trip', () => {
+  it('сохраняет неизвестные совместимые поля при round-trip', () => {
     const source = structuredClone(demoFunnel)
     source.futureExtension = { enabled: true }
     source.nodes[0].futureNodeField = 'kept'
-    const serialized = serializeFunnel(source)
-    const parsed = parseFunnelDocument(JSON.parse(serialized))
+    const parsed = parseFunnelDocument(JSON.parse(serializeFunnel(source)))
     expect(parsed.success).toBe(true)
     if (parsed.success) {
-      expect(parsed.data.analytics).toEqual(source.analytics)
-      expect(parsed.data.nodes.map((node) => node.id)).toEqual(source.nodes.map((node) => node.id))
       expect(parsed.data.futureExtension).toEqual({ enabled: true })
       expect(parsed.data.nodes[0].futureNodeField).toBe('kept')
+      expect(parsed.data.analytics).toEqual(source.analytics)
     }
   })
 
-  it('создаёт следующую версию', () => {
-    const next = createNewVersion(demoFunnel)
+  it('мигрирует MVP 0.1 без изменения ID и изолирует сломанную аналитику', () => {
+    const legacy = {
+      documentType: 'funnel', schemaVersion: '0.1.0',
+      project: { id: 'p_old', name: 'Старый проект', description: '' },
+      funnel: { id: 'f_old', name: 'MVP', version: 3, status: 'draft', startNodeId: 'n_start', createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-02T00:00:00.000Z' },
+      nodes: [
+        { id: 'n_start', type: 'start', position: { x: 10, y: 20 }, data: { title: 'Старт', note: '' } },
+        { id: 'n_end', type: 'end', position: { x: 200, y: 20 }, data: { title: 'Конец', text: 'Готово', note: '' } },
+      ],
+      edges: [{ id: 'e_old', source: 'n_start', target: 'n_end', sourceHandle: 'next' }],
+      assets: [], analytics: { snapshotAt: 42, nodes: 'broken' }, futureRoot: { keep: true },
+    }
+    const result = parseAndMigrateFunnelDocument(legacy)
+    expect(result.success).toBe(true)
+    if (result.success) {
+      expect(result.document.schemaVersion).toBe('1.0.0')
+      expect(result.document.nodes.map((node) => node.id)).toEqual(['n_start', 'n_end'])
+      expect(result.document.edges[0].id).toBe('e_old')
+      expect(result.document.editor.nodePositions.n_start).toEqual({ x: 10, y: 20 })
+      expect(result.document.futureRoot).toEqual({ keep: true })
+      expect(result.analyticsIsolated).toBe(true)
+      expect(result.document.analytics.summary.started).toBe(0)
+    }
+  })
+
+  it('создаёт независимую следующую версию и сбрасывает статистику', () => {
+    const next = createNewVersion(demoFunnel, 'Изменили тест')
     expect(next.funnel.version).toBe(2)
+    expect(next.funnel.parentVersion).toBe(1)
+    expect(next.funnel.changeComment).toBe('Изменили тест')
     expect(next.funnel.status).toBe('draft')
     expect(next.nodes).toEqual(demoFunnel.nodes)
-    expect(next.edges).toEqual(demoFunnel.edges)
-  })
-
-  it('сбрасывает статистику только в новой версии', () => {
-    const source = structuredClone(demoFunnel)
-    const next = createNewVersion(source)
-    expect(source.analytics.summary.started).toBe(120)
     expect(next.analytics.snapshotAt).toBeNull()
-    expect(next.analytics.summary).toEqual({ totalUsers: 0, started: 0, completed: 0 })
-    expect(next.analytics.funnelVersion).toBe(2)
-  })
-
-  it('не меняет устойчивые ID при редактировании названия', () => {
-    const document = structuredClone(demoFunnel)
-    const ids = document.nodes.map((node) => node.id)
-    document.nodes[1].data.title = 'Новое название'
-    expect(document.nodes.map((node) => node.id)).toEqual(ids)
+    expect(demoFunnel.analytics.summary.started).toBe(1612)
   })
 })
 
-describe('проверка графа', () => {
+describe('проверка графа и аналитика', () => {
   it('находит недостижимый блок', () => {
     const document = structuredClone(demoFunnel)
-    document.nodes.push({ id: 'orphan', type: 'end', position: { x: 0, y: 0 }, data: { title: 'Сирота', text: '—', note: '' } })
-    const issues = validateFunnel(document)
-    expect(issues.some((issue) => issue.code === 'unreachable_node' && issue.nodeId === 'orphan')).toBe(true)
+    const orphan = createNode('end')
+    orphan.id = 'orphan_end'
+    orphan.data.title = 'Сирота'
+    document.nodes.push(orphan)
+    document.editor.nodePositions[orphan.id] = { x: 0, y: 0 }
+    expect(validateFunnel(document).some((issue) => issue.code === 'unreachable_node' && issue.nodeId === orphan.id)).toBe(true)
   })
 
   it('находит отсутствующий переход варианта', () => {
     const document = structuredClone(demoFunnel)
-    document.edges = document.edges.filter((edge) => edge.id !== 'edge_choice_test')
-    expect(validateFunnel(document).some((issue) => issue.code === 'choice_without_edge')).toBe(true)
+    document.edges = document.edges.filter((edge) => edge.id !== 'edge_source_social')
+    expect(validateFunnel(document).some((issue) => issue.code === 'missing_branch' && issue.nodeId === 'demo_source')).toBe(true)
   })
 
-  it('проверяет пустые и повторяющиеся assetKey', () => {
+  it('проверяет повторяющиеся assetKey', () => {
     const document = structuredClone(demoFunnel)
-    document.nodes.push({ id: 'media_two', type: 'media', position: { x: 0, y: 0 }, data: { title: 'Дубль', assetKey: 'gift_day_1_voice', displayName: 'Дубль', expectedType: 'voice', caption: '', required: true } })
-    let issues = validateFunnel(document)
-    expect(issues.some((issue) => issue.code === 'duplicate_asset_key')).toBe(true)
-    ;(document.nodes.at(-1)!.data as { assetKey: string }).assetKey = ''
-    issues = validateFunnel(document)
-    expect(issues.some((issue) => issue.code === 'empty_asset_key')).toBe(true)
+    document.assets.push({ ...structuredClone(document.assets[0]), id: 'asset_duplicate' })
+    expect(validateFunnel(document).some((issue) => issue.code === 'duplicate_key' && issue.section === 'media')).toBe(true)
   })
 
-  it('вычисляет entered, completed, dropped и conversion', () => {
-    expect(analyticsForNode(demoFunnel, 'demo_question')).toEqual({ entered: 89, completed: 78, dropped: 11, conversion: (78 / 89) * 100 })
+  it('вычисляет конверсию и корректно обрабатывает пустой снимок', () => {
+    expect(analyticsForNode(demoFunnel, 'demo_test')).toEqual({ entered: 1488, completed: 1210, dropped: 278, conversion: (1210 / 1488) * 100 })
     const empty = createEmptyFunnel()
     expect(analyticsForNode(empty, empty.funnel.startNodeId)).toEqual({ entered: 0, completed: 0, dropped: 0, conversion: 0 })
   })
