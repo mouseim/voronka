@@ -180,12 +180,19 @@ code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monosp
 .library-tip span { display: block; color: #566171; font-weight: 750; margin-bottom: 3px; }
 .library-no-results { padding: 30px 8px; color: #9ca3ad; text-align: center; font-size: 9px; }
 .canvas-wrap { min-width: 0; min-height: 0; background: #f7f8fb; position: relative; }
-.canvas-wrap .react-flow__pane { cursor: grab; }
-.canvas-wrap .react-flow__pane:active { cursor: grabbing; }
+.canvas-wrap .canvas-tool-pan .react-flow__pane { cursor: grab; }
+.canvas-wrap .canvas-tool-pan .react-flow__pane:active { cursor: grabbing; }
+.canvas-wrap .canvas-tool-pan .react-flow__node,
+.canvas-wrap .canvas-tool-pan .react-flow__edge { pointer-events: none; }
+.canvas-wrap .canvas-tool-select .react-flow__pane { cursor: default; }
 .canvas-wrap .react-flow__controls { box-shadow: 0 4px 14px rgba(40,47,69,.1); border: 1px solid #e0e3ea; overflow: hidden; border-radius: 9px; }
 .canvas-wrap .react-flow__controls-button { border-bottom-color: #e7e9ee; color: #596271; }
-.canvas-wrap .react-flow__minimap { border: 1px solid #e0e3e9; box-shadow: 0 4px 14px rgba(40,47,69,.07); border-radius: 9px; overflow: hidden; }
-.canvas-floating-actions { position: absolute; left: 14px; top: 14px; display: flex; gap: 7px; z-index: 5; }
+.canvas-tools { position: absolute; left: 14px; top: 14px; z-index: 7; display: flex; padding: 3px; gap: 2px; border: 1px solid #dfe3ea; border-radius: 10px; background: rgba(255,255,255,.96); box-shadow: 0 4px 14px rgba(40,47,69,.09); }
+.canvas-tools button { min-height: 30px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: #747c88; display: inline-flex; align-items: center; gap: 6px; font-size: 10px; font-weight: 680; cursor: pointer; }
+.canvas-tools button:hover { color: #536ad3; background: #f3f5fb; }
+.canvas-tools button.active { color: #4964d6; background: #eaf0ff; box-shadow: inset 0 0 0 1px #d4ddff; }
+.canvas-tools button:focus-visible { outline: 2px solid #6d82df; outline-offset: 2px; }
+.canvas-floating-actions { position: absolute; left: 14px; top: 60px; display: flex; gap: 7px; z-index: 5; }
 .canvas-floating-actions button { min-height: 30px; border: 1px solid #e0e3ea; background: rgba(255,255,255,.94); box-shadow: 0 3px 12px rgba(42,50,76,.06); border-radius: 8px; padding: 0 10px; display: inline-flex; align-items: center; gap: 5px; color: #697281; font-size: 10px; font-weight: 650; cursor: pointer; }
 .canvas-floating-actions button:hover, .canvas-floating-actions button.active { color: #536fe8; border-color: #cfd6f4; background: #f6f8ff; }
 .canvas-search { position: absolute; right: 14px; top: 14px; z-index: 6; height: 32px; width: 220px; padding-left: 9px; border: 1px solid #dfe3e9; border-radius: 8px; background: rgba(255,255,255,.96); box-shadow: 0 3px 12px rgba(42,50,76,.06); display: flex; align-items: center; gap: 5px; color: #969eaa; }
@@ -702,10 +709,12 @@ code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monosp
   .export-button { min-width: 38px; padding: 0 10px; }
   .export-button > span, .export-button > svg:last-child { display: none; }
   .mobile-drawer-backdrop { inset: 60px 0 0; }
+  .canvas-tools button { width: 34px; padding: 0; justify-content: center; }
+  .canvas-tools button span { display: none; }
+  .canvas-floating-actions { top: 58px; }
   .canvas-floating-actions button:first-child { display: none; }
   .canvas-search { display: none; }
   .selection-toolbar { max-width: calc(100vw - 70px); overflow-x: auto; }
-  .canvas-wrap .react-flow__minimap { display: none; }
   .modal-backdrop { padding: 10px; }
   .dialog { padding: 24px 18px; }
   .dialog-actions { flex-direction: column-reverse; }

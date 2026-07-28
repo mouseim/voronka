@@ -3,7 +3,6 @@ import {
   BackgroundVariant,
   Controls,
   MarkerType,
-  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
@@ -26,8 +25,10 @@ import {
   Eye,
   FileImage,
   GitBranch,
+  Hand,
   LayoutGrid,
   Menu,
+  MousePointer2,
   Package,
   PanelRight,
   Redo2,
@@ -95,6 +96,7 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave }: Ed
   const [moreOpen, setMoreOpen] = useState(false)
   const [mobilePanel, setMobilePanel] = useState<'library' | 'properties' | null>(null)
   const [nodeSearch, setNodeSearch] = useState('')
+  const [canvasTool, setCanvasTool] = useState<'pan' | 'select'>('pan')
   const canvasRef = useRef<HTMLDivElement>(null)
 
   const nodes: FunnelCanvasNode[] = useMemo(() => document.nodes.map((node) => ({
@@ -186,6 +188,8 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave }: Ed
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c' && selectedNodeIds.length) { event.preventDefault(); copySelected() }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'v') { event.preventDefault(); pasteCopied() }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'd' && selectedNodeIds.length) { event.preventDefault(); duplicateSelected() }
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'h') setCanvasTool('pan')
+      if (!event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === 'v') setCanvasTool('select')
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedEdgeId) { event.preventDefault(); deleteEdge(selectedEdgeId) }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedNodeIds.length) {
         const removable = document.nodes.filter((candidate) => selectedNodeIds.includes(candidate.id) && candidate.type !== 'start')
@@ -220,10 +224,13 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave }: Ed
     <div className="editor-layout">
       <BlockLibrary onAdd={addAtCenter} hasStart={document.nodes.some((node) => node.type === 'start')} />
       <main className="canvas-wrap" ref={canvasRef} onDrop={onDrop} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move' }}>
-        <ReactFlow<FunnelCanvasNode, Edge> nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onNodeClick={(event, node) => { if (event.metaKey || event.ctrlKey || event.shiftKey) selectNodes(selectedNodeIds.includes(node.id) ? selectedNodeIds.filter((id) => id !== node.id) : [...selectedNodeIds, node.id]); else selectNode(node.id) }} onEdgeClick={(_, edge) => selectEdge(edge.id)} onPaneClick={() => { selectNode(null); selectEdge(null) }} onConnect={(connection: Connection) => connection.source && connection.target && connect(connection as Connection & { source: string; target: string })} onNodeDragStart={beginTransaction} onNodeDragStop={endTransaction} defaultViewport={{ x: 35, y: 50, zoom: .72 }} minZoom={.18} maxZoom={1.7} deleteKeyCode={null} snapToGrid snapGrid={[16, 16]} selectionOnDrag panOnDrag={[1, 2]} multiSelectionKeyCode={['Meta', 'Control', 'Shift']} proOptions={{ hideAttribution: true }}>
+        <ReactFlow<FunnelCanvasNode, Edge> className={`canvas-flow canvas-tool-${canvasTool}`} nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onNodeClick={(event, node) => { if (event.metaKey || event.ctrlKey || event.shiftKey) selectNodes(selectedNodeIds.includes(node.id) ? selectedNodeIds.filter((id) => id !== node.id) : [...selectedNodeIds, node.id]); else selectNode(node.id) }} onEdgeClick={(_, edge) => selectEdge(edge.id)} onPaneClick={() => { selectNode(null); selectEdge(null) }} onConnect={(connection: Connection) => connection.source && connection.target && connect(connection as Connection & { source: string; target: string })} onNodeDragStart={beginTransaction} onNodeDragStop={endTransaction} defaultViewport={{ x: 35, y: 50, zoom: .72 }} minZoom={.18} maxZoom={1.7} deleteKeyCode={null} snapToGrid snapGrid={[16, 16]} selectionOnDrag={canvasTool === 'select'} panOnDrag={canvasTool === 'pan' ? [0, 1, 2] : [1, 2]} nodesDraggable={canvasTool === 'select'} nodesConnectable={canvasTool === 'select'} elementsSelectable={canvasTool === 'select'} multiSelectionKeyCode={['Meta', 'Control', 'Shift']} proOptions={{ hideAttribution: true }}>
           <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} color="#d8dde8" />
           <Controls position="bottom-left" showInteractive={false} />
-          <MiniMap position="bottom-right" pannable zoomable nodeColor="#cbd3e6" maskColor="rgba(248,249,252,.76)" />
+          <div className="canvas-tools" role="toolbar" aria-label="Инструменты холста">
+            <button className={canvasTool === 'pan' ? 'active' : ''} aria-label="Рука — перемещать холст" aria-pressed={canvasTool === 'pan'} title="Рука — перемещать холст (H)" onClick={() => setCanvasTool('pan')}><Hand size={15} /><span>Рука</span></button>
+            <button className={canvasTool === 'select' ? 'active' : ''} aria-label="Выделение — выбирать и перемещать блоки" aria-pressed={canvasTool === 'select'} title="Выделение — выбирать и перемещать блоки (V)" onClick={() => setCanvasTool('select')}><MousePointer2 size={15} /><span>Выделение</span></button>
+          </div>
           <div className="canvas-floating-actions"><button onClick={() => fitView({ padding: .25, duration: 350 })}>Вписать схему</button><button onClick={() => { autoLayout(); window.setTimeout(() => fitView({ padding: .2, duration: 350 }), 30) }}><LayoutGrid size={14} /> Упорядочить</button>{document.analytics.snapshotAt && <button className={analyticsOverlay ? 'active' : ''} onClick={toggleAnalyticsOverlay}><BarChart3 size={14} /> Показатели</button>}</div>
           <div className="canvas-search"><Search size={14} /><input value={nodeSearch} onChange={(event) => setNodeSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && findNode()} placeholder="Найти этап по названию" /><button onClick={findNode}>Найти</button></div>
           {selectedNodeIds.length > 1 && <div className="selection-toolbar"><span>{selectedNodeIds.length} выбрано</span><button onClick={duplicateSelected}><Copy size={14} /></button><button onClick={() => alignSelected('left')}><AlignStartVertical size={14} /></button><button onClick={() => alignSelected('top')}><AlignStartHorizontal size={14} /></button><button onClick={() => alignSelected('horizontal')}><AlignHorizontalSpaceAround size={14} /></button><button onClick={() => alignSelected('vertical')}><AlignVerticalSpaceAround size={14} /></button></div>}
