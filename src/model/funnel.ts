@@ -1,5 +1,6 @@
 import type {
   BotSettings,
+  ConditionData,
   FunnelAnalytics,
   FunnelDocument,
   FunnelNode,
@@ -11,9 +12,10 @@ import type {
   Position,
   ProductBlockData,
   TestBlockData,
+  VariableData,
 } from './types'
 
-export const SCHEMA_VERSION = '2.0.0' as const
+export const SCHEMA_VERSION = '3.0.0' as const
 
 export const newId = (prefix: string) => `${prefix}_${crypto.randomUUID()}`
 
@@ -70,6 +72,11 @@ export function createNode(type: NodeType, _position?: Position): FunnelNode {
     message: { title: 'Новое сообщение', text: 'Введите текст сообщения', buttons: [] },
     media: { title: 'Материал', assetId: undefined, caption: '', required: true },
     timer: { title: 'Пауза', duration: 1, unit: 'hours', respectQuietHours: true },
+    variable: {
+      title: 'Изменить переменную',
+      operations: [{ id: newId('operation'), variableId: undefined, operation: 'set', value: '' }],
+    },
+    condition: { title: 'Проверить условие', variableId: undefined, operator: 'equals', value: '' },
     test: { title: 'Психологический тест', testId: undefined, welcomeText: 'Давайте узнаем ваш результат' },
     form: {
       title: 'Форма заявки',
@@ -126,6 +133,7 @@ export function createEmptyFunnel(name = 'Новая воронка'): FunnelDoc
       updatedAt: now,
     },
     bot: { ...defaultBotSettings(), displayName: name },
+    variables: [],
     nodes: [start],
     edges: [],
     tests: [],
@@ -207,6 +215,7 @@ export function nodeHandles(node: FunnelNode, document?: FunnelDocument): NodeHa
       ? [{ id: 'accepted', label: 'Согласился' }, { id: 'declined', label: 'Отказался' }]
       : [{ id: 'accepted', label: 'Согласился' }]
   }
+  if (node.type === 'condition') return [{ id: 'true', label: 'Да' }, { id: 'false', label: 'Нет' }]
   if (node.type === 'product') {
     const data = node.data as ProductBlockData
     const handles: NodeHandle[] = [
@@ -260,6 +269,16 @@ export function productUsageCount(document: FunnelDocument, productId: string): 
     if (node.type === 'message') count += (node.data as MessageData).buttons.filter((button) => button.productId === productId).length
   })
   return count
+}
+
+export function variableUsageCount(document: FunnelDocument, variableId: string): number {
+  return document.nodes.reduce((count, node) => {
+    if (node.type === 'condition' && (node.data as ConditionData).variableId === variableId) return count + 1
+    if (node.type === 'variable') {
+      return count + (node.data as VariableData).operations.filter((operation) => operation.variableId === variableId).length
+    }
+    return count
+  }, 0)
 }
 
 export function trackingCodeBase(source: string, campaign: string): string {

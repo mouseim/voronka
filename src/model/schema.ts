@@ -17,6 +17,13 @@ const formField = z.object({
   label: z.string(),
   required: z.boolean(),
 }).passthrough()
+const variableValue = z.union([z.string(), z.number().finite(), z.boolean()])
+const variableOperation = z.object({
+  id: z.string().min(1),
+  variableId: z.string().optional(),
+  operation: z.enum(['set', 'add', 'subtract', 'toggle', 'reset']),
+  value: variableValue.optional(),
+}).passthrough()
 
 const node = <T extends string>(type: T, data: z.ZodTypeAny) => z.object({
   id: z.string().min(1),
@@ -30,6 +37,12 @@ const nodeSchema = z.discriminatedUnion('type', [
   node('message', base.extend({ text: z.string(), buttons: z.array(messageButton) })),
   node('media', base.extend({ assetId: z.string().optional(), caption: z.string(), required: z.boolean() })),
   node('timer', base.extend({ duration: z.number().finite().positive(), unit: z.enum(['minutes', 'hours', 'days']), respectQuietHours: z.boolean() })),
+  node('variable', base.extend({ operations: z.array(variableOperation) })),
+  node('condition', base.extend({
+    variableId: z.string().optional(),
+    operator: z.enum(['equals', 'not_equals', 'greater', 'greater_or_equal', 'less', 'less_or_equal', 'contains', 'not_contains', 'is_empty', 'is_not_empty', 'is_true', 'is_false']),
+    value: variableValue.optional(),
+  })),
   node('test', base.extend({ testId: z.string().optional(), welcomeText: z.string() })),
   node('form', base.extend({ introText: z.string(), fields: z.array(formField), submitText: z.string(), confirmationText: z.string() })),
   node('consent', base.extend({ text: z.string(), policyUrl: z.string(), acceptText: z.string(), declineEnabled: z.boolean(), declineText: z.string() })),
@@ -101,6 +114,14 @@ const productSchema = z.object({
   afterPurchaseText: z.string(),
 }).passthrough()
 
+const variableSchema = z.object({
+  id: z.string().min(1),
+  key: z.string().regex(/^[a-z][a-z0-9_]*$/),
+  name: z.string(),
+  type: z.enum(['text', 'number', 'boolean']),
+  defaultValue: variableValue,
+}).passthrough()
+
 const trackingLinkSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
@@ -167,6 +188,7 @@ const documentSchema = z.object({
     reminders: z.object({ maxCount: z.number().int().nonnegative(), cancelAfterContinue: z.boolean(), respectQuietHours: z.boolean() }).passthrough(),
     trackingLinks: z.array(trackingLinkSchema),
   }).passthrough(),
+  variables: z.array(variableSchema),
   nodes: z.array(nodeSchema),
   edges: z.array(z.object({
     id: z.string().min(1),
@@ -187,16 +209,28 @@ export function parseAndMigrateFunnelDocument(raw: unknown): ImportResult {
   if (!raw || typeof raw !== 'object') return { success: false, errors: ['Файл не содержит объект воронки.'] }
   const version = (raw as { schemaVersion?: unknown }).schemaVersion
   if (typeof version !== 'string') return { success: false, errors: ['В файле не указана версия формата.'] }
-  if (!version.startsWith('2.')) {
+  if (version.startsWith('1.') || version.startsWith('0.')) {
     return {
       success: false,
       errors: ['Этот файл создан в старой расширенной версии конструктора и не поддерживается новым упрощённым форматом.'],
     }
   }
-  if (version !== SCHEMA_VERSION) {
+  let candidate = raw
+  const notices = []
+  if (version === '2.0.0') {
+    candidate = {
+      ...(raw as Record<string, unknown>),
+      schemaVersion: SCHEMA_VERSION,
+      variables: [],
+    }
+    notices.push({
+      level: 'info' as const,
+      message: 'Файл формата 2.0.0 обновлён до 3.0.0. Добавлен пустой справочник переменных.',
+    })
+  } else if (version !== SCHEMA_VERSION) {
     return { success: false, errors: [`Формат ${version} пока не поддерживается. Откройте файл в совместимой версии конструктора.`] }
   }
-  const result = documentSchema.safeParse(raw)
+  const result = documentSchema.safeParse(candidate)
   if (!result.success) {
     const errors = result.error.issues.slice(0, 12).map((issue) => {
       const place = issue.path.length ? issue.path.join(' → ') : 'файл'
@@ -204,7 +238,7 @@ export function parseAndMigrateFunnelDocument(raw: unknown): ImportResult {
     })
     return { success: false, errors }
   }
-  return { success: true, document: result.data as FunnelDocument }
+  return { success: true, document: result.data as FunnelDocument, notices }
 }
 
 function humanizeZodMessage(message: string): string {

@@ -1,7 +1,8 @@
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
 import { BarChart3 } from 'lucide-react'
 import { nodeHandles } from '../model/funnel'
-import type { FunnelDocument, FunnelNode, MediaData, TestBlockData, TimerData } from '../model/types'
+import { CONDITION_OPERATOR_LABELS, VARIABLE_OPERATION_LABELS } from '../model/variables'
+import type { ConditionData, FunnelDocument, FunnelNode, MediaData, TestBlockData, TimerData, VariableData } from '../model/types'
 import { nodeMeta } from './nodeMeta'
 
 export type FunnelCanvasNode = Node<{
@@ -38,10 +39,25 @@ export function FunnelNodeCard({ data, selected }: NodeProps<FunnelCanvasNode>) 
       {!data.collapsed && node.type === 'timer' && <div className="funnel-node__detail">{(node.data as TimerData).duration} {unitShort((node.data as TimerData).unit)}</div>}
       {!data.collapsed && node.type === 'media' && <div className="funnel-node__detail">{data.document.assets.find((asset) => asset.id === (node.data as MediaData).assetId)?.name ?? 'Выберите материал'}</div>}
       {!data.collapsed && node.type === 'test' && <div className="funnel-node__detail">{data.document.tests.find((test) => test.id === (node.data as TestBlockData).testId)?.name ?? 'Выберите тест'}</div>}
+      {!data.collapsed && node.type === 'variable' && <div className="funnel-node__detail">{variableSummary(data.document, node.data as VariableData)}</div>}
+      {!data.collapsed && node.type === 'condition' && <div className="funnel-node__detail">{conditionSummary(data.document, node.data as ConditionData)}</div>}
       {!data.collapsed && data.analytics && <div className="node-analytics"><BarChart3 size={12} /> {data.analytics.entered} → {data.analytics.completed} · {data.analytics.conversion.toFixed(0)}%</div>}
       {(data.collapsed || handles.length === 1) && handles.length === 1 && <Handle type="source" position={Position.Right} id={handles[0].id} className="node-handle" />}
     </div>
   )
+}
+
+function variableSummary(document: FunnelDocument, data: VariableData) {
+  if (!data.operations.length) return 'Добавьте действие'
+  const first = data.operations[0]
+  const variable = document.variables.find((item) => item.id === first.variableId)
+  const suffix = data.operations.length > 1 ? ` +${data.operations.length - 1}` : ''
+  return variable ? `${variable.name}: ${VARIABLE_OPERATION_LABELS[first.operation]}${suffix}` : 'Выберите переменную'
+}
+
+function conditionSummary(document: FunnelDocument, data: ConditionData) {
+  const variable = document.variables.find((item) => item.id === data.variableId)
+  return variable ? `${variable.name} · ${CONDITION_OPERATOR_LABELS[data.operator]}` : 'Выберите переменную'
 }
 
 function unitShort(unit: string) {

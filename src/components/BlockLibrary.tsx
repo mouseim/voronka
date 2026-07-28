@@ -3,7 +3,7 @@ import type { NodeType } from '../model/types'
 import { nodeMeta } from './nodeMeta'
 
 const types = Object.keys(nodeMeta) as NodeType[]
-const categories = ['Основные', 'Данные и продажи'] as const
+const categories = ['Основные', 'Логика', 'Данные и продажи'] as const
 
 interface BlockLibraryProps {
   onAdd: (type: NodeType) => void
@@ -41,7 +41,7 @@ export function BlockLibrary({ onAdd, hasStart, className = '' }: BlockLibraryPr
           </div>
         ))}
       </div>
-      <div className="library-tip"><span>Главный принцип</span> Кнопка «Продолжить по ветке» создаёт свой выход на карточке сообщения.</div>
+      <div className="library-tip"><span>Подсказка</span> Переменные меняют данные, а условие ведёт по ветке «Да» или «Нет».</div>
     </aside>
   )
 }

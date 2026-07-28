@@ -1,10 +1,12 @@
 import {
+  Braces,
   CircleDot,
   Clock3,
   ExternalLink,
   FileImage,
   Flag,
   FormInput,
+  GitBranch,
   MessageSquareText,
   PlayCircle,
   ShieldCheck,
@@ -16,7 +18,7 @@ import type { NodeType } from '../model/types'
 export interface NodeMeta {
   label: string
   description: string
-  category: 'Основные' | 'Данные и продажи'
+  category: 'Основные' | 'Логика' | 'Данные и продажи'
   icon: LucideIcon
   color: string
   background: string
@@ -27,6 +29,8 @@ export const nodeMeta: Record<NodeType, NodeMeta> = {
   message: { label: 'Сообщение', description: 'Текст, кнопки и ветки', category: 'Основные', icon: MessageSquareText, color: '#3d63dd', background: '#edf2ff' },
   media: { label: 'Медиа', description: 'Фото, видео или документ', category: 'Основные', icon: FileImage, color: '#be4a70', background: '#fff0f5' },
   timer: { label: 'Пауза', description: 'Продолжить позже', category: 'Основные', icon: Clock3, color: '#2770a7', background: '#eaf6ff' },
+  variable: { label: 'Переменные', description: 'Присвоить или изменить', category: 'Логика', icon: Braces, color: '#7651c9', background: '#f2edff' },
+  condition: { label: 'Условие', description: 'Разделить на «Да» и «Нет»', category: 'Логика', icon: GitBranch, color: '#a15c20', background: '#fff3e7' },
   test: { label: 'Тест', description: 'Вопросы и результаты', category: 'Данные и продажи', icon: PlayCircle, color: '#6b4bc3', background: '#f1edff' },
   form: { label: 'Форма', description: 'Контакт или заявка', category: 'Данные и продажи', icon: FormInput, color: '#287f8d', background: '#e9f8fa' },
   consent: { label: 'Согласие', description: 'Принять или отказаться', category: 'Данные и продажи', icon: ShieldCheck, color: '#397b5b', background: '#eaf7f0' },

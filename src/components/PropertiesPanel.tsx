@@ -1,6 +1,15 @@
 import { Copy, GripVertical, Plus, Trash2, X } from 'lucide-react'
 import { newId, nodeTitle } from '../model/funnel'
+import {
+  CONDITION_OPERATOR_LABELS,
+  VARIABLE_OPERATION_LABELS,
+  operationsForType,
+  operatorsForType,
+  operationNeedsValue,
+  operatorNeedsValue,
+} from '../model/variables'
 import type {
+  ConditionData,
   ConsentData,
   ExternalLinkData,
   FormData,
@@ -12,6 +21,9 @@ import type {
   ProductBlockData,
   TestBlockData,
   TimerData,
+  VariableData,
+  VariableOperation,
+  VariableValue,
 } from '../model/types'
 import { useEditorStore } from '../store/editor'
 
@@ -58,6 +70,8 @@ export function PropertiesPanel({ document, onCloseMobile }: PropertiesPanelProp
         {node.type === 'message' && <MessageFields document={document} nodeId={node.id} data={node.data as MessageData} />}
         {node.type === 'media' && <MediaFields document={document} data={node.data as MediaData} patch={patch} />}
         {node.type === 'timer' && <TimerFields data={node.data as TimerData} patch={patch} />}
+        {node.type === 'variable' && <VariableFields document={document} data={node.data as VariableData} patch={patch} />}
+        {node.type === 'condition' && <ConditionFields document={document} data={node.data as ConditionData} patch={patch} />}
         {node.type === 'test' && <TestFields document={document} data={node.data as TestBlockData} patch={patch} />}
         {node.type === 'form' && <FormFields data={node.data as FormData} patch={patch} />}
         {node.type === 'consent' && <ConsentFields data={node.data as ConsentData} patch={patch} />}
@@ -160,6 +174,78 @@ function TimerFields({ data, patch }: { data: TimerData; patch: Patch }) {
     <div className="field-pair"><Field label="Через сколько"><input type="number" min="1" value={data.duration} onChange={(event) => patch({ duration: Math.max(1, Number(event.target.value)) })} /></Field><Field label="Единица"><select value={data.unit} onChange={(event) => patch({ unit: event.target.value })}><option value="minutes">Минуты</option><option value="hours">Часы</option><option value="days">Дни</option></select></Field></div>
     <Toggle checked={data.respectQuietHours} onChange={(respectQuietHours) => patch({ respectQuietHours })} label="Учитывать тихие часы" />
   </>
+}
+
+function VariableFields({ document, data, patch }: { document: FunnelDocument; data: VariableData; patch: Patch }) {
+  const update = (operations: VariableOperation[]) => patch({ operations })
+  const patchOperation = (id: string, changes: Partial<VariableOperation>) => update(data.operations.map((operation) => operation.id === id ? { ...operation, ...changes } : operation))
+  const add = () => update([...data.operations, {
+    id: newId('operation'),
+    variableId: document.variables[0]?.id,
+    operation: 'set',
+    value: document.variables[0]?.defaultValue ?? '',
+  }])
+  return <>
+    <p className="panel-help">Действия выполняются сверху вниз, затем воронка сразу переходит к следующему блоку.</p>
+    <div className="section-label"><span>Действия</span><b>{data.operations.length}</b></div>
+    <div className="simple-button-list">
+      {data.operations.map((operation, index) => {
+        const variable = document.variables.find((item) => item.id === operation.variableId)
+        const allowed = operationsForType(variable?.type)
+        return <div className="option-editor" key={operation.id}>
+          <div className="option-editor-title"><GripVertical size={15} /><strong>Действие {index + 1}</strong></div>
+          <Field label="Переменная"><select value={operation.variableId ?? ''} onChange={(event) => {
+            const selected = document.variables.find((item) => item.id === event.target.value)
+            patchOperation(operation.id, { variableId: selected?.id, operation: 'set', value: selected?.defaultValue ?? '' })
+          }}><option value="">Выберите переменную</option>{document.variables.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></Field>
+          <Field label="Что сделать"><select value={operation.operation} onChange={(event) => {
+            const next = event.target.value as VariableOperation['operation']
+            patchOperation(operation.id, { operation: next, value: operationNeedsValue(next) ? operation.value ?? variable?.defaultValue ?? '' : undefined })
+          }}>{allowed.map((kind) => <option value={kind} key={kind}>{VARIABLE_OPERATION_LABELS[kind]}</option>)}</select></Field>
+          {variable && operationNeedsValue(operation.operation) && <Field label="Значение"><VariableValueInput type={variable.type} value={operation.value ?? variable.defaultValue} onChange={(value) => patchOperation(operation.id, { value })} /></Field>}
+          <div className="option-row-actions">
+            <button disabled={index === 0} onClick={() => update(moveItem(data.operations, index, index - 1))}>↑ Выше</button>
+            <button disabled={index === data.operations.length - 1} onClick={() => update(moveItem(data.operations, index, index + 1))}>↓ Ниже</button>
+            <button className="danger" onClick={() => update(data.operations.filter((item) => item.id !== operation.id))}><Trash2 size={14} /> Удалить</button>
+          </div>
+        </div>
+      })}
+    </div>
+    <button className="button secondary full" onClick={add}><Plus size={16} /> Добавить действие</button>
+    {!document.variables.length && <p className="friendly-note">Сначала создайте переменную во вкладке «Переменные» в верхнем меню.</p>}
+  </>
+}
+
+function ConditionFields({ document, data, patch }: { document: FunnelDocument; data: ConditionData; patch: Patch }) {
+  const variable = document.variables.find((item) => item.id === data.variableId)
+  const operators = operatorsForType(variable?.type)
+  return <>
+    <p className="panel-help">Условие проверяет одно понятное правило и выбирает выход «Да» или «Нет».</p>
+    <Field label="Переменная"><select value={data.variableId ?? ''} onChange={(event) => {
+      const selected = document.variables.find((item) => item.id === event.target.value)
+      const operator = operatorsForType(selected?.type)[0]
+      patch({ variableId: selected?.id, operator, value: selected?.defaultValue ?? '' })
+    }}><option value="">Выберите переменную</option>{document.variables.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></Field>
+    <Field label="Сравнение"><select value={data.operator} onChange={(event) => {
+      const operator = event.target.value as ConditionData['operator']
+      patch({ operator, value: operatorNeedsValue(operator) ? data.value ?? variable?.defaultValue ?? '' : undefined })
+    }}>{operators.map((operator) => <option value={operator} key={operator}>{CONDITION_OPERATOR_LABELS[operator]}</option>)}</select></Field>
+    {variable && operatorNeedsValue(data.operator) && <Field label="Значение для сравнения"><VariableValueInput type={variable.type} value={data.value ?? variable.defaultValue} onChange={(value) => patch({ value })} /></Field>}
+    {variable && <div className="friendly-note">Сейчас правило читается так: <strong>{variable.name} {CONDITION_OPERATOR_LABELS[data.operator].toLocaleLowerCase('ru')}{operatorNeedsValue(data.operator) ? ` «${String(data.value ?? variable.defaultValue)}»` : ''}</strong>.</div>}
+    {!document.variables.length && <p className="friendly-note">Сначала создайте переменную во вкладке «Переменные» в верхнем меню.</p>}
+  </>
+}
+
+function VariableValueInput({ type, value, onChange }: { type: 'text' | 'number' | 'boolean'; value: VariableValue; onChange: (value: VariableValue) => void }) {
+  if (type === 'boolean') return <select value={String(Boolean(value))} onChange={(event) => onChange(event.target.value === 'true')}><option value="true">Да</option><option value="false">Нет</option></select>
+  return <input type={type === 'number' ? 'number' : 'text'} value={String(value)} onChange={(event) => onChange(type === 'number' ? Number(event.target.value) : event.target.value)} />
+}
+
+function moveItem<T>(items: T[], from: number, to: number): T[] {
+  if (to < 0 || to >= items.length) return items
+  const copy = [...items]
+  ;[copy[from], copy[to]] = [copy[to], copy[from]]
+  return copy
 }
 
 function TestFields({ document, data, patch }: { document: FunnelDocument; data: TestBlockData; patch: Patch }) {

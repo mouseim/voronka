@@ -3,6 +3,8 @@ export type NodeType =
   | 'message'
   | 'media'
   | 'timer'
+  | 'variable'
+  | 'condition'
   | 'test'
   | 'form'
   | 'consent'
@@ -15,7 +17,23 @@ export type TimerUnit = 'minutes' | 'hours' | 'days'
 export type MediaType = 'image' | 'video' | 'audio' | 'voice' | 'video_note' | 'document' | 'animation'
 export type QuestionType = 'single' | 'multiple' | 'scale' | 'number' | 'text'
 export type IssueSeverity = 'error' | 'warning' | 'advice'
-export type WorkspaceSection = 'tests' | 'media' | 'products' | 'bot'
+export type WorkspaceSection = 'variables' | 'tests' | 'media' | 'products' | 'bot'
+export type VariableType = 'text' | 'number' | 'boolean'
+export type VariableValue = string | number | boolean
+export type VariableOperationKind = 'set' | 'add' | 'subtract' | 'toggle' | 'reset'
+export type ConditionOperator =
+  | 'equals'
+  | 'not_equals'
+  | 'greater'
+  | 'greater_or_equal'
+  | 'less'
+  | 'less_or_equal'
+  | 'contains'
+  | 'not_contains'
+  | 'is_empty'
+  | 'is_not_empty'
+  | 'is_true'
+  | 'is_false'
 
 export interface Position {
   x: number
@@ -51,6 +69,23 @@ export interface TimerData extends BaseNodeData {
   duration: number
   unit: TimerUnit
   respectQuietHours: boolean
+}
+
+export interface VariableOperation {
+  id: string
+  variableId?: string
+  operation: VariableOperationKind
+  value?: VariableValue
+}
+
+export interface VariableData extends BaseNodeData {
+  operations: VariableOperation[]
+}
+
+export interface ConditionData extends BaseNodeData {
+  variableId?: string
+  operator: ConditionOperator
+  value?: VariableValue
 }
 
 export interface TestBlockData extends BaseNodeData {
@@ -107,6 +142,8 @@ export type FunnelNodeData =
   | MessageData
   | MediaData
   | TimerData
+  | VariableData
+  | ConditionData
   | TestBlockData
   | FormData
   | ConsentData
@@ -222,6 +259,14 @@ export interface Product {
   afterPurchaseText: string
 }
 
+export interface FunnelVariable {
+  id: string
+  key: string
+  name: string
+  type: VariableType
+  defaultValue: VariableValue
+}
+
 export interface TrackingLink {
   id: string
   name: string
@@ -301,7 +346,7 @@ export interface FunnelEditor {
 
 export interface FunnelDocument {
   documentType: 'funnel'
-  schemaVersion: '2.0.0'
+  schemaVersion: '3.0.0'
   project: {
     id: string
     name: string
@@ -321,6 +366,7 @@ export interface FunnelDocument {
     changeComment?: string
   }
   bot: BotSettings
+  variables: FunnelVariable[]
   nodes: FunnelNode[]
   edges: FunnelEdge[]
   tests: FunnelTest[]
@@ -332,7 +378,7 @@ export interface FunnelDocument {
 
 export interface ValidationIssue {
   severity: IssueSeverity
-  section: 'structure' | 'content' | 'tests' | 'media' | 'products' | 'bot' | 'analytics'
+  section: 'structure' | 'content' | 'variables' | 'tests' | 'media' | 'products' | 'bot' | 'analytics'
   code: string
   message: string
   nodeId?: string
@@ -402,5 +448,6 @@ export interface SimulationState {
   finished: boolean
   elapsedMinutes: number
   answers: Record<string, string | string[] | number>
+  variables: Record<string, VariableValue>
   testResult?: CalculatedTestResult
 }

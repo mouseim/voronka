@@ -1,8 +1,16 @@
 import { nodeHandles, nodeTitle } from './funnel'
+import { initialVariableValues } from './variables'
 import type { FunnelDocument, FunnelNode, SimulationState, SimulationStep, TestBlockData } from './types'
 
 export function createSimulation(document: FunnelDocument): SimulationState {
-  return { currentNodeId: document.funnel.startNodeId, steps: [], finished: false, elapsedMinutes: 0, answers: {} }
+  return {
+    currentNodeId: document.funnel.startNodeId,
+    steps: [],
+    finished: false,
+    elapsedMinutes: 0,
+    answers: {},
+    variables: initialVariableValues(document.variables),
+  }
 }
 
 export function visibleStep(document: FunnelDocument, node: FunnelNode): SimulationStep {

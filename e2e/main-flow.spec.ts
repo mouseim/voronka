@@ -6,16 +6,16 @@ test('упрощённое демо открывает схему, тесты, �
   await page.goto('/')
   await page.getByRole('button', { name: /Открыть полное демо/ }).click()
   await expect(page.getByLabel('Название воронки')).toHaveValue('7 внутренних механизмов')
-  await expect(page.locator('.funnel-node')).toHaveCount(12)
+  await expect(page.locator('.funnel-node')).toHaveCount(15)
   await expect(page.locator('.react-flow__minimap')).toHaveCount(0)
   await expect(page.locator('.canvas-tools')).toHaveCount(0)
   const viewport = page.locator('.react-flow__viewport')
   const viewportBeforePan = await viewport.getAttribute('style')
   const paneBox = await page.locator('.react-flow__pane').boundingBox()
   if (!paneBox) throw new Error('Холст не найден')
-  await page.mouse.move(paneBox.x + paneBox.width * .65, paneBox.y + paneBox.height * .65)
+  await page.mouse.move(paneBox.x + paneBox.width * .75, paneBox.y + paneBox.height * .9)
   await page.mouse.down()
-  await page.mouse.move(paneBox.x + paneBox.width * .65 + 70, paneBox.y + paneBox.height * .65 + 45, { steps: 4 })
+  await page.mouse.move(paneBox.x + paneBox.width * .75 + 70, paneBox.y + paneBox.height * .9 - 45, { steps: 4 })
   await page.mouse.up()
   await expect.poll(() => viewport.getAttribute('style')).not.toBe(viewportBeforePan)
 
@@ -29,8 +29,8 @@ test('упрощённое демо открывает схему, тесты, �
   await page.mouse.up()
   await expect.poll(() => firstNode.getAttribute('style')).not.toBe(nodeBeforeDrag)
 
-  const selectionStart = { x: paneBox.x + paneBox.width * .7, y: paneBox.y + paneBox.height * .8 }
-  await page.mouse.click(selectionStart.x, selectionStart.y)
+  const selectionStart = { x: paneBox.x + paneBox.width * .85, y: paneBox.y + paneBox.height * .92 }
+  await page.locator('.react-flow__pane').dispatchEvent('click')
   await expect(page.locator('.canvas-selection-ready')).toBeVisible()
   await page.mouse.move(selectionStart.x, selectionStart.y)
   await page.mouse.down()
@@ -38,6 +38,10 @@ test('упрощённое демо открывает схему, тесты, �
   await expect(page.locator('.react-flow__selection')).toBeVisible()
   await page.mouse.up()
   await expect(page.locator('.canvas-selection-ready')).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Переменные', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Переменные' })).toBeVisible()
+  await expect(page.getByText('Интерес к подробному разбору', { exact: true }).first()).toBeVisible()
 
   await page.getByRole('button', { name: 'Тесты' }).click()
   await expect(page.getByRole('heading', { name: 'Психологические тесты' })).toBeVisible()
@@ -51,6 +55,7 @@ test('упрощённое демо открывает схему, тесты, �
   await page.getByRole('button', { name: 'Начать', exact: true }).click()
   await expect(page.getByText(/Здравствуйте! Пройдите короткую диагностику/)).toBeVisible()
   await page.getByRole('button', { name: 'Пройти тест' }).click()
+  await page.getByRole('button', { name: 'Применить и продолжить' }).click()
   await page.getByRole('button', { name: 'Продолжить', exact: true }).click()
   await expect(page.getByText('Что вам важнее всего в сложной ситуации?')).toBeVisible()
   await page.getByLabel('Закрыть').click()
@@ -78,7 +83,8 @@ test('мобильный интерфейс даёт доступ к блока�
   await page.getByRole('button', { name: 'Блоки', exact: true }).click()
   const drawer = page.locator('.mobile-drawer')
   await expect(drawer.getByRole('button', { name: /Сообщение/ })).toBeVisible()
-  await expect(drawer.getByRole('button', { name: /Условие/ })).toHaveCount(0)
+  await expect(drawer.getByRole('button', { name: /Переменные/ })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: /Условие/ })).toBeVisible()
   await page.locator('.mobile-drawer-backdrop').click({ position: { x: 390, y: 20 } })
 
   await page.getByRole('button', { name: 'Тесты' }).click()

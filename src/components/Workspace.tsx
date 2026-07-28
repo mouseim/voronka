@@ -5,6 +5,7 @@ import {
   BarChart3,
   Beaker,
   Bot,
+  Braces,
   Check,
   ChevronRight,
   Copy,
@@ -17,12 +18,14 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { assetUsageCount, newId, productUsageCount, telegramDeepLink, uniqueTrackingCode } from '../model/funnel'
+import { assetUsageCount, newId, productUsageCount, slugify, telegramDeepLink, uniqueTrackingCode, variableUsageCount } from '../model/funnel'
+import { defaultValueForType, VARIABLE_TYPE_LABELS } from '../model/variables'
 import { calculateTestResult } from '../model/scoring'
 import type {
   CombinedTestResult,
   FunnelDocument,
   FunnelTest,
+  FunnelVariable,
   MediaAsset,
   Product,
   QuestionType,
@@ -32,6 +35,7 @@ import type {
   TestResult,
   TestScale,
   TrackingLink,
+  VariableType,
   WorkspaceSection,
 } from '../model/types'
 import { useEditorStore } from '../store/editor'
@@ -48,6 +52,7 @@ interface WorkspaceProps {
 }
 
 const navigation: Array<{ id: WorkspaceSection; label: string; icon: typeof Beaker }> = [
+  { id: 'variables', label: 'Переменные', icon: Braces },
   { id: 'tests', label: 'Тесты', icon: Beaker },
   { id: 'media', label: 'Медиа', icon: FileImage },
   { id: 'products', label: 'Продукты', icon: Package },
@@ -67,6 +72,7 @@ export function Workspace({ document, section, onSection, onBack, onEdit, onAnal
       </header>
       <main className="workspace-main simple-workspace">
         <button className="back-link" onClick={onEdit}><ArrowLeft size={16} /> К схеме</button>
+        {section === 'variables' && <VariablesSection document={document} />}
         {section === 'tests' && <TestsSection document={document} />}
         {section === 'media' && <MediaSection document={document} />}
         {section === 'products' && <ProductsSection document={document} />}
@@ -74,6 +80,82 @@ export function Workspace({ document, section, onSection, onBack, onEdit, onAnal
       </main>
     </div>
   )
+}
+
+function VariablesSection({ document }: { document: FunnelDocument }) {
+  const updateDocument = useEditorStore((state) => state.updateDocument)
+  const [selectedId, setSelectedId] = useState(document.variables[0]?.id ?? '')
+  const selected = document.variables.find((variable) => variable.id === selectedId)
+  const patch = (changes: Partial<FunnelVariable>) => updateDocument((draft) => {
+    const variable = draft.variables.find((item) => item.id === selectedId)
+    if (variable) Object.assign(variable, changes)
+  })
+  const add = () => {
+    const index = document.variables.length + 1
+    const base = `variable_${index}`
+    const used = new Set(document.variables.map((variable) => variable.key))
+    let key = base
+    let suffix = 2
+    while (used.has(key)) key = `${base}_${suffix++}`
+    const variable: FunnelVariable = {
+      id: newId('variable'),
+      key,
+      name: `Переменная ${index}`,
+      type: 'text',
+      defaultValue: '',
+    }
+    updateDocument((draft) => { draft.variables.push(variable) })
+    setSelectedId(variable.id)
+  }
+  const changeName = (name: string) => {
+    if (!selected) return
+    const autoKey = slugify(name).replace(/-/g, '_').replace(/^[^a-z]+/, '') || selected.key
+    const keyIsAutomatic = selected.key.startsWith('variable_') || !selected.key.trim()
+    patch({ name, ...(keyIsAutomatic ? { key: uniqueVariableKey(document, autoKey, selected.id) } : {}) })
+  }
+  const changeType = (type: VariableType) => patch({ type, defaultValue: defaultValueForType(type) })
+  const usage = selected ? variableUsageCount(document, selected.id) : 0
+  return <>
+    <PageHeading
+      eyebrow="Данные воронки"
+      title="Переменные"
+      text="Создайте понятные значения один раз, а затем меняйте и проверяйте их блоками на схеме."
+      action={<button className="button primary" onClick={add}><Plus size={16} /> Добавить переменную</button>}
+    />
+    <div className="catalog-layout">
+      <aside className="catalog-list">
+        <div className="catalog-list-title"><strong>Переменные</strong><span>{document.variables.length}</span></div>
+        {document.variables.map((variable) => <button className={selectedId === variable.id ? 'active' : ''} key={variable.id} onClick={() => setSelectedId(variable.id)}><span className="variable-type">{variable.type === 'number' ? '123' : variable.type === 'boolean' ? 'Да' : 'Aa'}</span><span><strong>{variable.name}</strong><code>{'{{'}{variable.key}{'}}'}</code></span><ChevronRight size={14} /></button>)}
+        {!document.variables.length && <div className="catalog-empty">Создайте первую переменную</div>}
+      </aside>
+      <section className="entity-editor">
+        {selected ? <>
+          <div className="entity-title-row"><div><span className="eyebrow">Переменная</span><input className="entity-title-input" value={selected.name} onChange={(event) => changeName(event.target.value)} /></div><button className="mini-icon danger" title="Удалить переменную" disabled={usage > 0} onClick={() => { if (!confirm(`Удалить переменную «${selected.name}»?`)) return; updateDocument((draft) => { draft.variables = draft.variables.filter((variable) => variable.id !== selected.id) }); setSelectedId('') }}><Trash2 size={17} /></button></div>
+          <div className="friendly-note">Вставьте <strong>{'{{'}{selected.key}{'}}'}</strong> в текст сообщения, подпись медиа или финальный текст — бот подставит текущее значение.</div>
+          <div className="form-grid">
+            <Field label="Тип значения"><select value={selected.type} onChange={(event) => changeType(event.target.value as VariableType)}>{(Object.keys(VARIABLE_TYPE_LABELS) as VariableType[]).map((type) => <option value={type} key={type}>{VARIABLE_TYPE_LABELS[type]}</option>)}</select></Field>
+            <Field label="Технический код"><input value={selected.key} onChange={(event) => patch({ key: event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '') })} /></Field>
+            <Field label="Начальное значение"><VariableDefaultInput variable={selected} onChange={(defaultValue) => patch({ defaultValue })} /></Field>
+          </div>
+          <div className="friendly-note">Используется в <strong>{usage}</strong> действиях или условиях. {usage > 0 ? 'Чтобы удалить переменную, сначала уберите её из блоков на схеме.' : 'Переменную можно безопасно удалить.'}</div>
+        </> : <Empty title="Переменная не выбрана" text="Добавьте переменную или выберите её слева." />}
+      </section>
+    </div>
+  </>
+}
+
+function VariableDefaultInput({ variable, onChange }: { variable: FunnelVariable; onChange: (value: FunnelVariable['defaultValue']) => void }) {
+  if (variable.type === 'boolean') return <select value={String(Boolean(variable.defaultValue))} onChange={(event) => onChange(event.target.value === 'true')}><option value="false">Нет</option><option value="true">Да</option></select>
+  return <input type={variable.type === 'number' ? 'number' : 'text'} value={String(variable.defaultValue)} onChange={(event) => onChange(variable.type === 'number' ? Number(event.target.value) : event.target.value)} />
+}
+
+function uniqueVariableKey(document: FunnelDocument, raw: string, exceptId?: string): string {
+  const base = raw.replace(/^[^a-z]+/, '') || 'variable'
+  const used = new Set(document.variables.filter((variable) => variable.id !== exceptId).map((variable) => variable.key))
+  if (!used.has(base)) return base
+  let suffix = 2
+  while (used.has(`${base}_${suffix}`)) suffix += 1
+  return `${base}_${suffix}`
 }
 
 function TestsSection({ document }: { document: FunnelDocument }) {

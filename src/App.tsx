@@ -1,5 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
-import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { StartScreen } from './components/StartScreen'
 import type { WorkspaceSection } from './components/Workspace'
 import { freshDemoFunnel } from './model/demo'
@@ -14,12 +13,7 @@ const Analytics = lazy(() => import('./components/Analytics').then((module) => (
 const Workspace = lazy(() => import('./components/Workspace').then((module) => ({ default: module.Workspace })))
 
 export default function App() {
-  return <HashRouter><AppRoutes /></HashRouter>
-}
-
-function AppRoutes() {
-  const navigate = useNavigate()
-  const location = useLocation()
+  const { path, navigate } = useHashRoute()
   const document = useEditorStore((state) => state.document)
   const dirty = useEditorStore((state) => state.dirty)
   const setDocument = useEditorStore((state) => state.setDocument)
@@ -88,21 +82,58 @@ function AppRoutes() {
     onNewVersion: newVersion,
   }
 
+  useEffect(() => {
+    if (!document && path !== '/') navigate('/', true)
+  }, [document, navigate, path])
+
+  const workspaceMatch = path.match(/^\/workspace\/([^/]+)$/)
+  const content = path === '/'
+    ? <StartScreen {...homeProps} />
+    : path === '/editor' && document
+      ? <Editor document={document} onBack={() => navigate('/')} onAnalytics={() => navigate('/analytics')} onWorkspace={(section) => navigate(`/workspace/${section}`)} onSave={manualSave} />
+      : path === '/analytics' && document
+        ? <Analytics document={document} onBack={() => navigate('/')} onEdit={() => navigate('/editor')} />
+        : workspaceMatch && document
+          ? <WorkspaceRoute document={document} rawSection={workspaceMatch[1]} onBack={() => navigate('/')} onEdit={() => navigate('/editor')} onAnalytics={() => navigate('/analytics')} onSection={(section) => navigate(`/workspace/${section}`)} />
+          : <StartScreen {...homeProps} />
+
   return <Suspense fallback={<div className="app-loading"><span className="brand-mark">В</span><p>Открываем воронку…</p></div>}>
-    <Routes>
-      <Route path="/" element={<StartScreen {...homeProps} />} />
-      <Route path="/editor" element={document ? <Editor document={document} onBack={() => navigate('/')} onAnalytics={() => navigate('/analytics')} onWorkspace={(section) => navigate(`/workspace/${section}`)} onSave={manualSave} /> : <Navigate to="/" replace />} />
-      <Route path="/analytics" element={document ? <Analytics document={document} onBack={() => navigate('/')} onEdit={() => navigate('/editor')} /> : <Navigate to="/" replace />} />
-      <Route path="/workspace/:section" element={document ? <WorkspaceRoute document={document} onBack={() => navigate('/')} onEdit={() => navigate('/editor')} onAnalytics={() => navigate('/analytics')} /> : <Navigate to="/" replace />} />
-      <Route path="*" element={<Navigate to={location.pathname === '/editor' && document ? '/editor' : '/'} replace />} />
-    </Routes>
+    {content}
   </Suspense>
 }
 
-function WorkspaceRoute({ document, onBack, onEdit, onAnalytics }: { document: FunnelDocument; onBack: () => void; onEdit: () => void; onAnalytics: () => void }) {
-  const navigate = useNavigate()
-  const params = useParams()
-  const allowed: WorkspaceSection[] = ['tests', 'media', 'products', 'bot']
-  const section = allowed.includes(params.section as WorkspaceSection) ? params.section as WorkspaceSection : 'tests'
-  return <Workspace document={document} section={section} onSection={(next) => navigate(`/workspace/${next}`)} onBack={onBack} onEdit={onEdit} onAnalytics={onAnalytics} />
+function WorkspaceRoute({ document, rawSection, onBack, onEdit, onAnalytics, onSection }: { document: FunnelDocument; rawSection: string; onBack: () => void; onEdit: () => void; onAnalytics: () => void; onSection: (section: WorkspaceSection) => void }) {
+  const allowed: WorkspaceSection[] = ['variables', 'tests', 'media', 'products', 'bot']
+  const section = allowed.includes(rawSection as WorkspaceSection) ? rawSection as WorkspaceSection : 'variables'
+  return <Workspace document={document} section={section} onSection={onSection} onBack={onBack} onEdit={onEdit} onAnalytics={onAnalytics} />
+}
+
+function useHashRoute() {
+  const readPath = () => {
+    const raw = window.location.hash.replace(/^#/, '') || '/'
+    return raw.startsWith('/') ? raw : `/${raw}`
+  }
+  const [path, setPath] = useState(readPath)
+
+  useEffect(() => {
+    const onHashChange = () => setPath(readPath())
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
+  const navigate = useCallback((next: string, replace = false) => {
+    const target = next.startsWith('/') ? next : `/${next}`
+    if (replace) {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#${target}`)
+      setPath(target)
+      return
+    }
+    if (readPath() === target) {
+      setPath(target)
+      return
+    }
+    window.location.hash = target
+  }, [])
+
+  return { path, navigate }
 }

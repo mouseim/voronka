@@ -18,6 +18,7 @@ import {
   BarChart3,
   Beaker,
   Bot,
+  Braces,
   CheckCircle2,
   Copy,
   Download,
@@ -204,6 +205,7 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave }: Ed
       <div className="funnel-name-field"><input value={document.funnel.name} onChange={(event) => updateDocument((draft) => { draft.funnel.name = event.target.value; draft.project.name = event.target.value; draft.bot.displayName = event.target.value })} aria-label="Название воронки" /><span>Версия {document.funnel.version} · <i className={dirty ? 'dirty' : ''}>{dirty ? 'Сохраняем…' : savedAt ? 'Все изменения сохранены' : 'Черновик'}</i></span></div>
       <nav className="editor-main-nav">
         <button className="active"><GitBranch size={15} /> Схема</button>
+        <button onClick={() => onWorkspace('variables')}><Braces size={15} /> Переменные</button>
         <button onClick={() => onWorkspace('tests')}><Beaker size={15} /> Тесты</button>
         <button onClick={() => onWorkspace('media')}><FileImage size={15} /> Медиа</button>
         <button onClick={() => onWorkspace('products')}><Package size={15} /> Продукты</button>
@@ -216,7 +218,7 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave }: Ed
       <button className="header-action" onClick={check}><CheckCircle2 size={18} /><span>Проверить</span></button>
       <button className="header-action" onClick={() => setPreview(true)}><Eye size={18} /><span>Предпросмотр</span></button>
       <button className="button primary export-button" aria-label="Скачать файл для бота" onClick={exportCurrent}><Download size={17} /><span>Скачать файл для бота</span></button>
-      <div className="export-menu-wrap"><button className="icon-button bordered" onClick={() => setMoreOpen(!moreOpen)} aria-label="Ещё"><Ellipsis size={19} /></button>{moreOpen && <div className="export-menu more-menu"><button onClick={createVersion}><Copy size={16} /><span><strong>Создать новую версию</strong><small>Со статистикой с нуля</small></span></button><button onClick={() => { setMoreOpen(false); downloadFunnel(document, `backup-v${document.funnel.version}`) }}><Download size={16} /><span><strong>Резервная копия</strong><small>Текущая версия целиком</small></span></button><label><FileImage size={16} /><span><strong>Импортировать другой файл</strong><small>Только упрощённый формат 2.0</small></span><input type="file" accept=".funnel,.json" hidden onChange={(event) => importAnother(event.target.files?.[0])} /></label><button onClick={() => { setMoreOpen(false); alert(`Формат файла: ${document.schemaVersion}\nВерсия воронки: ${document.funnel.version}\nБлоков: ${document.nodes.length}\nСвязей: ${document.edges.length}`) }}><CheckCircle2 size={16} /><span><strong>Сведения о файле</strong><small>Версия формата и состав</small></span></button></div>}</div>
+      <div className="export-menu-wrap"><button className="icon-button bordered" onClick={() => setMoreOpen(!moreOpen)} aria-label="Ещё"><Ellipsis size={19} /></button>{moreOpen && <div className="export-menu more-menu"><button onClick={createVersion}><Copy size={16} /><span><strong>Создать новую версию</strong><small>Со статистикой с нуля</small></span></button><button onClick={() => { setMoreOpen(false); downloadFunnel(document, `backup-v${document.funnel.version}`) }}><Download size={16} /><span><strong>Резервная копия</strong><small>Текущая версия целиком</small></span></button><label><FileImage size={16} /><span><strong>Импортировать другой файл</strong><small>Формат 3.0 и автоматический импорт 2.0</small></span><input type="file" accept=".funnel,.json" hidden onChange={(event) => importAnother(event.target.files?.[0])} /></label><button onClick={() => { setMoreOpen(false); alert(`Формат файла: ${document.schemaVersion}\nВерсия воронки: ${document.funnel.version}\nБлоков: ${document.nodes.length}\nСвязей: ${document.edges.length}`) }}><CheckCircle2 size={16} /><span><strong>Сведения о файле</strong><small>Версия формата и состав</small></span></button></div>}</div>
     </header>
     <div className="editor-layout">
       <BlockLibrary onAdd={addAtCenter} hasStart={document.nodes.some((node) => node.type === 'start')} />

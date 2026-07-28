@@ -918,6 +918,15 @@ code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monosp
 .preview-form label { display: flex; flex-direction: column; gap: 4px; color: #707986; font-size: 8px; }
 .preview-form input { min-height: 35px; border: 1px solid #dfe3e8; border-radius: 7px; padding: 7px; }
 .preview-link { color: #4c69cd; font-size: 9px; }
+.logic-preview { width: 88%; padding: 14px; border-radius: 12px; background: #fff; display: flex; flex-direction: column; gap: 8px; }
+.logic-preview > strong { font-size: 11px; }
+.logic-preview p { margin: 0; color: #697380; font-size: 9px; line-height: 1.5; }
+.logic-preview .button { min-height: 36px; justify-content: center; }
+.preview-variables { width: 88%; margin-top: 5px; padding: 9px 10px; border: 1px solid rgba(82,103,160,.14); border-radius: 10px; background: rgba(255,255,255,.72); display: flex; flex-direction: column; gap: 5px; }
+.preview-variables > strong { color: #798392; font-size: 8px; text-transform: uppercase; letter-spacing: .05em; }
+.preview-variables > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: #606a77; font-size: 8px; }
+.preview-variables code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-variables b { color: #5269c9; }
 
 @media (max-width: 1260px) {
   .editor-main-nav { display: none; }

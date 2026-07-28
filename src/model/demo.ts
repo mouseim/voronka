@@ -106,6 +106,13 @@ export function freshDemoFunnel(): FunnelDocument {
   document.assets = assets
   document.products = products
   document.tests = [buildTest()]
+  document.variables = [{
+    id: 'variable_interest',
+    key: 'interest_score',
+    name: 'Интерес к подробному разбору',
+    type: 'number',
+    defaultValue: 0,
+  }]
 
   document.nodes = [
     node(document.funnel.startNodeId, 'start', { title: 'Вход в воронку' }),
@@ -119,10 +126,18 @@ export function freshDemoFunnel(): FunnelDocument {
       ],
     }),
     node('cover', 'media', { title: 'Обложка диагностики', assetId: 'asset_cover', caption: '7 механизмов, которые влияют на решения', required: true }),
+    node('set_test_interest', 'variable', {
+      title: 'Отметить интерес к тесту',
+      operations: [{ id: 'operation_test_interest', variableId: 'variable_interest', operation: 'set', value: 1 }],
+    }),
     node('details', 'message', {
       title: 'О диагностике',
       text: 'Семь вопросов помогут увидеть привычный способ реагирования. Это займёт около трёх минут.',
       buttons: [{ id: 'button_details_test', text: 'Начать', action: 'branch' }],
+    }),
+    node('set_details_interest', 'variable', {
+      title: 'Отметить интерес к деталям',
+      operations: [{ id: 'operation_details_interest', variableId: 'variable_interest', operation: 'set', value: 2 }],
     }),
     node('test', 'test', { title: 'Тест «7 механизмов»', testId: 'test_mechanisms', welcomeText: 'Отвечайте так, как чувствуете сейчас.' }),
     node('result', 'message', {
@@ -152,6 +167,12 @@ export function freshDemoFunnel(): FunnelDocument {
       declineText: 'Не согласен',
     }),
     node('pause', 'timer', { title: 'Пауза перед предложением', duration: 15, unit: 'minutes', respectQuietHours: true }),
+    node('interest_condition', 'condition', {
+      title: 'Проверить интерес к разбору',
+      variableId: 'variable_interest',
+      operator: 'greater_or_equal',
+      value: 2,
+    }),
     node('offer', 'product', {
       title: 'Расширенный отчёт',
       productId: 'product_report',
@@ -161,20 +182,24 @@ export function freshDemoFunnel(): FunnelDocument {
       payButtonText: 'Купить за 1 490 ₽',
       allowSkip: true,
     }),
-    node('done', 'end', { title: 'Завершение', text: 'Спасибо! Возвращайтесь к своим результатам в любое время.' }),
+    node('done', 'end', { title: 'Завершение', text: 'Спасибо! Ваш уровень интереса: {{interest_score}}. Возвращайтесь к своим результатам в любое время.' }),
     node('declined', 'end', { title: 'Без согласия', text: 'Хорошо. Мы не будем сохранять ваши контактные данные.' }),
   ]
 
   document.edges = [
     { id: 'e_start', source: document.funnel.startNodeId, target: 'welcome', sourceHandle: 'next' },
-    { id: 'e_test', source: 'welcome', target: 'cover', sourceHandle: 'button_test', label: 'Пройти тест' },
-    { id: 'e_details', source: 'welcome', target: 'details', sourceHandle: 'button_details', label: 'Узнать подробнее' },
+    { id: 'e_test', source: 'welcome', target: 'set_test_interest', sourceHandle: 'button_test', label: 'Пройти тест' },
+    { id: 'e_test_interest', source: 'set_test_interest', target: 'cover', sourceHandle: 'next' },
+    { id: 'e_details', source: 'welcome', target: 'set_details_interest', sourceHandle: 'button_details', label: 'Узнать подробнее' },
+    { id: 'e_details_interest', source: 'set_details_interest', target: 'details', sourceHandle: 'next' },
     { id: 'e_cover', source: 'cover', target: 'test', sourceHandle: 'next' },
     { id: 'e_details_test', source: 'details', target: 'test', sourceHandle: 'button_details_test', label: 'Начать' },
     ...document.tests[0].results.map((result) => ({ id: `e_${result.id}`, source: 'test', target: 'result', sourceHandle: result.id, label: result.name })),
     { id: 'e_combined', source: 'test', target: 'result', sourceHandle: 'result_s1_s2', label: 'Быть нужной + Контроль' },
     { id: 'e_form', source: 'result', target: 'form', sourceHandle: 'button_form', label: 'Получить памятку' },
-    { id: 'e_offer_direct', source: 'result', target: 'offer', sourceHandle: 'button_offer', label: 'Посмотреть полный отчёт' },
+    { id: 'e_offer_direct', source: 'result', target: 'interest_condition', sourceHandle: 'button_offer', label: 'Посмотреть полный отчёт' },
+    { id: 'e_interest_yes', source: 'interest_condition', target: 'offer', sourceHandle: 'true', label: 'Да' },
+    { id: 'e_interest_no', source: 'interest_condition', target: 'pause', sourceHandle: 'false', label: 'Нет' },
     { id: 'e_form_submitted', source: 'form', target: 'consent', sourceHandle: 'submitted' },
     { id: 'e_form_cancelled', source: 'form', target: 'done', sourceHandle: 'cancelled' },
     { id: 'e_consent', source: 'consent', target: 'pause', sourceHandle: 'accepted' },
@@ -188,16 +213,19 @@ export function freshDemoFunnel(): FunnelDocument {
   document.editor.nodePositions = {
     [document.funnel.startNodeId]: { x: 40, y: 280 },
     welcome: { x: 310, y: 250 },
-    cover: { x: 610, y: 80 },
-    details: { x: 610, y: 430 },
-    test: { x: 900, y: 250 },
-    result: { x: 1210, y: 250 },
-    form: { x: 1510, y: 80 },
-    consent: { x: 1790, y: 80 },
-    pause: { x: 2070, y: 80 },
-    offer: { x: 1510, y: 430 },
-    done: { x: 2360, y: 250 },
-    declined: { x: 2070, y: 480 },
+    set_test_interest: { x: 610, y: 70 },
+    cover: { x: 900, y: 70 },
+    set_details_interest: { x: 610, y: 440 },
+    details: { x: 900, y: 440 },
+    test: { x: 1190, y: 250 },
+    result: { x: 1500, y: 250 },
+    form: { x: 1800, y: 60 },
+    consent: { x: 2080, y: 60 },
+    interest_condition: { x: 1800, y: 430 },
+    pause: { x: 2360, y: 220 },
+    offer: { x: 2640, y: 250 },
+    done: { x: 2930, y: 250 },
+    declined: { x: 2360, y: 520 },
   }
 
   document.analytics = emptyAnalytics(1)

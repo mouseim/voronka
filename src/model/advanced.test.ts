@@ -5,15 +5,15 @@ import { createEmptyFunnel } from './funnel'
 import { parseAndMigrateFunnelDocument } from './schema'
 import { validateFunnel } from './validation'
 
-describe('упрощённая модель 2.0', () => {
-  it('библиотека содержит только 10 понятных типов', () => {
-    expect(Object.keys(nodeMeta)).toEqual(['start', 'message', 'media', 'timer', 'test', 'form', 'consent', 'product', 'external_link', 'end'])
-    expect(Object.keys(nodeMeta)).not.toEqual(expect.arrayContaining(['condition', 'formula', 'set_variable', 'random']))
+describe('упрощённая модель 3.0', () => {
+  it('добавляет только два понятных логических блока', () => {
+    expect(Object.keys(nodeMeta)).toEqual(['start', 'message', 'media', 'timer', 'variable', 'condition', 'test', 'form', 'consent', 'product', 'external_link', 'end'])
+    expect(Object.keys(nodeMeta)).not.toEqual(expect.arrayContaining(['formula', 'set_variable', 'random']))
   })
 
-  it('в корне файла нет переменных, формул и наборов сложных условий', () => {
+  it('в корне есть простой справочник переменных без формул', () => {
     const document = createEmptyFunnel() as unknown as Record<string, unknown>
-    expect(document.variables).toBeUndefined()
+    expect(document.variables).toEqual([])
     expect(document.resultSets).toBeUndefined()
     expect(document.testScenarios).toBeUndefined()
     expect(JSON.stringify(document)).not.toContain('FormulaExpression')
@@ -24,11 +24,24 @@ describe('упрощённая модель 2.0', () => {
     expect(issues.filter((issue) => issue.severity === 'error')).toEqual([])
   })
 
-  it('новый документ использует major-формат 2.0.0', () => {
+  it('новый документ использует major-формат 3.0.0', () => {
     const document = createEmptyFunnel()
-    expect(document.schemaVersion).toBe('2.0.0')
+    expect(document.schemaVersion).toBe('3.0.0')
     const parsed = parseAndMigrateFunnelDocument(document)
     expect(parsed.success).toBe(true)
+  })
+
+  it('автоматически поднимает простой формат 2.0.0 до 3.0.0', () => {
+    const old = structuredClone(createEmptyFunnel()) as unknown as Record<string, unknown>
+    old.schemaVersion = '2.0.0'
+    delete old.variables
+    const parsed = parseAndMigrateFunnelDocument(old)
+    expect(parsed.success).toBe(true)
+    if (parsed.success) {
+      expect(parsed.document.schemaVersion).toBe('3.0.0')
+      expect(parsed.document.variables).toEqual([])
+      expect(parsed.notices?.[0].message).toContain('2.0.0')
+    }
   })
 
   it('технический код ссылки безопасен для Telegram', () => {

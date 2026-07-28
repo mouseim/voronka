@@ -3,7 +3,17 @@ import { useMemo, useState } from 'react'
 import { nodeTitle } from '../model/funnel'
 import { calculateTestResult } from '../model/scoring'
 import { nextNodeId } from '../model/simulator'
+import {
+  applyVariableOperations,
+  CONDITION_OPERATOR_LABELS,
+  evaluateCondition,
+  formatVariableValue,
+  initialVariableValues,
+  renderVariableTemplate,
+  VARIABLE_OPERATION_LABELS,
+} from '../model/variables'
 import type {
+  ConditionData,
   ConsentData,
   ExternalLinkData,
   FormData,
@@ -13,12 +23,15 @@ import type {
   ProductBlockData,
   TestBlockData,
   TimerData,
+  VariableData,
+  VariableValue,
 } from '../model/types'
 
 export function Preview({ document, onClose }: { document: FunnelDocument; onClose: () => void }) {
   const [currentId, setCurrentId] = useState(document.funnel.startNodeId)
-  const [history, setHistory] = useState<string[]>([])
+  const [history, setHistory] = useState<Array<{ nodeId: string; variables: Record<string, VariableValue>; elapsed: number }>>([])
   const [elapsed, setElapsed] = useState(0)
+  const [variables, setVariables] = useState(() => initialVariableValues(document.variables))
   const [testAnswers, setTestAnswers] = useState<Record<string, string | string[] | number>>({})
   const [testResultId, setTestResultId] = useState<string | null>(null)
   const node = document.nodes.find((candidate) => candidate.id === currentId)
@@ -27,11 +40,13 @@ export function Preview({ document, onClose }: { document: FunnelDocument; onClo
     if (!test || !testResultId) return null
     try { return calculateTestResult(test, testAnswers) } catch { return null }
   }, [test, testAnswers, testResultId])
-  const go = (handle = 'next') => {
+  const render = (text: string) => renderVariableTemplate(text, document.variables, variables)
+  const go = (handle = 'next', nextVariables = variables) => {
     if (!node) return
     const target = nextNodeId(document, node.id, handle)
     if (!target) return
-    setHistory((items) => [...items, node.id])
+    setHistory((items) => [...items, { nodeId: node.id, variables: { ...variables }, elapsed }])
+    setVariables(nextVariables)
     setCurrentId(target)
     setTestResultId(null)
   }
@@ -39,13 +54,16 @@ export function Preview({ document, onClose }: { document: FunnelDocument; onClo
     const previous = history.at(-1)
     if (!previous) return
     setHistory((items) => items.slice(0, -1))
-    setCurrentId(previous)
+    setCurrentId(previous.nodeId)
+    setVariables(previous.variables)
+    setElapsed(previous.elapsed)
     setTestResultId(null)
   }
   const restart = () => {
     setCurrentId(document.funnel.startNodeId)
     setHistory([])
     setElapsed(0)
+    setVariables(initialVariableValues(document.variables))
     setTestAnswers({})
     setTestResultId(null)
   }
@@ -61,16 +79,22 @@ export function Preview({ document, onClose }: { document: FunnelDocument; onClo
               <div className="preview-stage">
                 <span className="preview-stage-name">{nodeTitle(node)}</span>
                 {node.type === 'start' && <BotBubble text="Готовы начать?" />}
-                {node.type === 'message' && <MessagePreview data={node.data as MessageData} onBranch={go} />}
-                {node.type === 'media' && <MediaPreview document={document} data={node.data as MediaData} onNext={() => go()} />}
+                {node.type === 'message' && <MessagePreview data={{ ...(node.data as MessageData), text: render((node.data as MessageData).text), buttons: (node.data as MessageData).buttons.map((button) => ({ ...button, text: render(button.text) })) }} onBranch={go} />}
+                {node.type === 'media' && <MediaPreview document={document} data={{ ...(node.data as MediaData), caption: render((node.data as MediaData).caption) }} onNext={() => go()} />}
                 {node.type === 'timer' && <TimerPreview data={node.data as TimerData} onNext={(minutes) => { setElapsed((value) => value + minutes); go() }} />}
+                {node.type === 'variable' && <VariablePreview document={document} data={node.data as VariableData} variables={variables} onApply={() => {
+                  const next = applyVariableOperations(document.variables, variables, (node.data as VariableData).operations)
+                  go('next', next)
+                }} />}
+                {node.type === 'condition' && <ConditionPreview document={document} data={node.data as ConditionData} variables={variables} onNext={(result) => go(result ? 'true' : 'false')} />}
                 {node.type === 'test' && test && <TestPreview test={test} answers={testAnswers} setAnswers={setTestAnswers} calculation={calculation} onCalculate={() => { const result = calculateTestResult(test, testAnswers); setTestResultId(result.chosenResultId) }} onNext={(resultId) => go(resultId)} />}
                 {node.type === 'test' && !test && <PreviewNotice title="Тест не выбран" text="Выберите тест в настройках блока." />}
-                {node.type === 'form' && <FormPreview data={node.data as FormData} onSubmit={() => go('submitted')} onCancel={() => go('cancelled')} />}
-                {node.type === 'consent' && <ConsentPreview data={node.data as ConsentData} onAccept={() => go('accepted')} onDecline={() => go('declined')} />}
-                {node.type === 'product' && <ProductPreview data={node.data as ProductBlockData} onOutcome={go} />}
-                {node.type === 'external_link' && <ExternalPreview data={node.data as ExternalLinkData} onNext={() => go()} />}
-                {node.type === 'end' && <div className="end-preview"><CheckCircle2 size={32} /><BotBubble text={String((node.data as { text: string }).text)} /><strong>Воронка завершена</strong></div>}
+                {node.type === 'form' && <FormPreview data={{ ...(node.data as FormData), introText: render((node.data as FormData).introText), submitText: render((node.data as FormData).submitText), confirmationText: render((node.data as FormData).confirmationText) }} onSubmit={() => go('submitted')} onCancel={() => go('cancelled')} />}
+                {node.type === 'consent' && <ConsentPreview data={{ ...(node.data as ConsentData), text: render((node.data as ConsentData).text), acceptText: render((node.data as ConsentData).acceptText), declineText: render((node.data as ConsentData).declineText) }} onAccept={() => go('accepted')} onDecline={() => go('declined')} />}
+                {node.type === 'product' && <ProductPreview data={{ ...(node.data as ProductBlockData), headline: render((node.data as ProductBlockData).headline), description: render((node.data as ProductBlockData).description), payButtonText: render((node.data as ProductBlockData).payButtonText) }} onOutcome={go} />}
+                {node.type === 'external_link' && <ExternalPreview data={{ ...(node.data as ExternalLinkData), text: render((node.data as ExternalLinkData).text), buttonText: render((node.data as ExternalLinkData).buttonText) }} onNext={() => go()} />}
+                {node.type === 'end' && <div className="end-preview"><CheckCircle2 size={32} /><BotBubble text={render(String((node.data as { text: string }).text))} /><strong>Воронка завершена</strong></div>}
+                {document.variables.length > 0 && <div className="preview-variables"><strong>Переменные сейчас</strong>{document.variables.map((variable) => <span key={variable.id}><code>{variable.name}</code><b>{formatVariableValue(variables[variable.id] ?? variable.defaultValue)}</b></span>)}</div>}
               </div>
             )}
           </div>
@@ -80,6 +104,28 @@ export function Preview({ document, onClose }: { document: FunnelDocument; onClo
       </section>
     </div>
   )
+}
+
+function VariablePreview({ document, data, variables, onApply }: { document: FunnelDocument; data: VariableData; variables: Record<string, VariableValue>; onApply: () => void }) {
+  return <div className="logic-preview">
+    <strong>Изменить данные</strong>
+    {data.operations.map((operation) => {
+      const variable = document.variables.find((item) => item.id === operation.variableId)
+      return <p key={operation.id}>{variable ? <><b>{variable.name}</b>: {VARIABLE_OPERATION_LABELS[operation.operation]}{operation.value !== undefined ? ` ${formatVariableValue(operation.value)}` : ''}</> : 'Переменная не выбрана'}</p>
+    })}
+    <button className="button primary" onClick={onApply}>Применить и продолжить</button>
+  </div>
+}
+
+function ConditionPreview({ document, data, variables, onNext }: { document: FunnelDocument; data: ConditionData; variables: Record<string, VariableValue>; onNext: (result: boolean) => void }) {
+  const variable = document.variables.find((item) => item.id === data.variableId)
+  const result = evaluateCondition(document.variables, variables, data)
+  return <div className="logic-preview">
+    <strong>Проверка условия</strong>
+    <p>{variable ? <><b>{variable.name}</b> сейчас «{formatVariableValue(variables[variable.id] ?? variable.defaultValue)}»</> : 'Переменная не выбрана'}</p>
+    {variable && <p>Правило: {CONDITION_OPERATOR_LABELS[data.operator].toLocaleLowerCase('ru')}{data.value !== undefined ? ` «${formatVariableValue(data.value)}»` : ''}</p>}
+    <button className={`button ${result ? 'primary' : 'secondary'}`} onClick={() => onNext(result)}>Результат: {result ? 'Да' : 'Нет'} — продолжить</button>
+  </div>
 }
 
 function MessagePreview({ data, onBranch }: { data: MessageData; onBranch: (handle: string) => void }) {
