@@ -1,101 +1,113 @@
 import { describe, expect, it } from 'vitest'
-import { demoFunnel } from './demo'
-import { analyticsForNode, createEmptyFunnel, createNewVersion, createNode } from './funnel'
-import { parseAndMigrateFunnelDocument, parseFunnelDocument } from './schema'
-import { serializeFunnel } from '../services/files'
-import { validateFunnel } from './validation'
+import {
+  addMessageBranch,
+  createEmptyFunnel,
+  createNewVersion,
+  createNode,
+  nodeHandles,
+  removeMessageButton,
+  renameMessageButton,
+  telegramDeepLink,
+  uniqueTrackingCode,
+} from './funnel'
+import { freshDemoFunnel } from './demo'
+import { parseAndMigrateFunnelDocument } from './schema'
+import type { ConsentData, MessageData, ProductBlockData } from './types'
 
-describe('формат .funnel 1.0', () => {
-  it('принимает полную демо-воронку без ошибок', () => {
-    const result = parseFunnelDocument(structuredClone(demoFunnel))
-    expect(result.success).toBe(true)
-    expect(validateFunnel(demoFunnel).filter((issue) => issue.severity === 'error')).toEqual([])
+describe('упрощённый граф', () => {
+  it('сообщение без кнопок имеет один обычный выход', () => {
+    const message = createNode('message')
+    ;(message.data as MessageData).buttons = []
+    expect(nodeHandles(message)).toEqual([{ id: 'next', label: 'Далее' }])
   })
 
-  it('отклоняет повреждённый документ с понятным путём', () => {
-    const broken = structuredClone(demoFunnel) as unknown as Record<string, unknown>
-    broken.documentType = 'javascript'
-    const result = parseFunnelDocument(broken)
-    expect(result.success).toBe(false)
-    if (!result.success) expect(result.errors[0]).toContain('documentType')
+  it('сообщение с тремя кнопками имеет три стабильных выхода', () => {
+    const message = createNode('message')
+    ;(message.data as MessageData).buttons = [
+      { id: 'yes', text: 'Да', action: 'branch' },
+      { id: 'later', text: 'Позже', action: 'branch' },
+      { id: 'no', text: 'Нет', action: 'branch' },
+    ]
+    expect(nodeHandles(message).map((handle) => handle.id)).toEqual(['yes', 'later', 'no'])
   })
 
-  it('сохраняет неизвестные совместимые поля при round-trip', () => {
-    const source = structuredClone(demoFunnel)
-    source.futureExtension = { enabled: true }
-    source.nodes[0].futureNodeField = 'kept'
-    const parsed = parseFunnelDocument(JSON.parse(serializeFunnel(source)))
-    expect(parsed.success).toBe(true)
-    if (parsed.success) {
-      expect(parsed.data.futureExtension).toEqual({ enabled: true })
-      expect(parsed.data.nodes[0].futureNodeField).toBe('kept')
-      expect(parsed.data.analytics).toEqual(source.analytics)
-    }
+  it('добавление кнопки создаёт новый доступный выход', () => {
+    const document = createEmptyFunnel()
+    const message = createNode('message')
+    ;(message.data as MessageData).buttons = []
+    document.nodes.push(message)
+    const result = addMessageBranch(document, message.id, 'Получить подарок')
+    const updated = result.document.nodes.find((node) => node.id === message.id)!
+    expect(nodeHandles(updated)).toContainEqual({ id: result.buttonId, label: 'Получить подарок' })
   })
 
-  it('мигрирует MVP 0.1 без изменения ID и изолирует сломанную аналитику', () => {
-    const legacy = {
-      documentType: 'funnel', schemaVersion: '0.1.0',
-      project: { id: 'p_old', name: 'Старый проект', description: '' },
-      funnel: { id: 'f_old', name: 'MVP', version: 3, status: 'draft', startNodeId: 'n_start', createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-02T00:00:00.000Z' },
-      nodes: [
-        { id: 'n_start', type: 'start', position: { x: 10, y: 20 }, data: { title: 'Старт', note: '' } },
-        { id: 'n_end', type: 'end', position: { x: 200, y: 20 }, data: { title: 'Конец', text: 'Готово', note: '' } },
-      ],
-      edges: [{ id: 'e_old', source: 'n_start', target: 'n_end', sourceHandle: 'next' }],
-      assets: [], analytics: { snapshotAt: 42, nodes: 'broken' }, futureRoot: { keep: true },
-    }
-    const result = parseAndMigrateFunnelDocument(legacy)
-    expect(result.success).toBe(true)
-    if (result.success) {
-      expect(result.document.schemaVersion).toBe('1.0.0')
-      expect(result.document.nodes.map((node) => node.id)).toEqual(['n_start', 'n_end'])
-      expect(result.document.edges[0].id).toBe('e_old')
-      expect(result.document.editor.nodePositions.n_start).toEqual({ x: 10, y: 20 })
-      expect(result.document.futureRoot).toEqual({ keep: true })
-      expect(result.analyticsIsolated).toBe(true)
-      expect(result.document.analytics.summary.started).toBe(0)
-    }
+  it('переименование кнопки сохраняет handle и связанную стрелку', () => {
+    const document = createEmptyFunnel()
+    const message = createNode('message')
+    const end = createNode('end')
+    ;(message.data as MessageData).buttons = [{ id: 'stable_button', text: 'Старое имя', action: 'branch' }]
+    document.nodes.push(message, end)
+    document.edges.push({ id: 'edge', source: message.id, target: end.id, sourceHandle: 'stable_button', label: 'Старое имя' })
+    const renamed = renameMessageButton(document, message.id, 'stable_button', 'Новое имя')
+    expect(renamed.edges[0]).toMatchObject({ sourceHandle: 'stable_button', label: 'Новое имя' })
   })
 
-  it('создаёт независимую следующую версию и сбрасывает статистику', () => {
-    const next = createNewVersion(demoFunnel, 'Изменили тест')
-    expect(next.funnel.version).toBe(2)
-    expect(next.funnel.parentVersion).toBe(1)
-    expect(next.funnel.changeComment).toBe('Изменили тест')
-    expect(next.funnel.status).toBe('draft')
-    expect(next.nodes).toEqual(demoFunnel.nodes)
-    expect(next.analytics.snapshotAt).toBeNull()
-    expect(demoFunnel.analytics.summary.started).toBe(1612)
+  it('удаление кнопки удаляет только связанную с ней стрелку', () => {
+    const document = createEmptyFunnel()
+    const message = createNode('message')
+    const end = createNode('end')
+    ;(message.data as MessageData).buttons = [{ id: 'remove', text: 'Удалить', action: 'branch' }, { id: 'keep', text: 'Оставить', action: 'branch' }]
+    document.nodes.push(message, end)
+    document.edges.push(
+      { id: 'remove_edge', source: message.id, target: end.id, sourceHandle: 'remove' },
+      { id: 'keep_edge', source: message.id, target: end.id, sourceHandle: 'keep' },
+    )
+    const result = removeMessageButton(document, message.id, 'remove')
+    expect(result.edges.map((edge) => edge.id)).toEqual(['keep_edge'])
+  })
+
+  it('ветви согласия независимы', () => {
+    const consent = createNode('consent')
+    expect(nodeHandles(consent).map((handle) => handle.id)).toEqual(['accepted', 'declined'])
+    ;(consent.data as ConsentData).declineEnabled = false
+    expect(nodeHandles(consent).map((handle) => handle.id)).toEqual(['accepted'])
+  })
+
+  it('ветви оплаты независимы и skip зависит от настройки', () => {
+    const product = createNode('product')
+    expect(nodeHandles(product).map((handle) => handle.id)).toEqual(['paid', 'failed', 'already_purchased', 'skip'])
+    ;(product.data as ProductBlockData).allowSkip = false
+    expect(nodeHandles(product).map((handle) => handle.id)).toEqual(['paid', 'failed', 'already_purchased'])
   })
 })
 
-describe('проверка графа и аналитика', () => {
-  it('находит недостижимый блок', () => {
-    const document = structuredClone(demoFunnel)
-    const orphan = createNode('end')
-    orphan.id = 'orphan_end'
-    orphan.data.title = 'Сирота'
-    document.nodes.push(orphan)
-    document.editor.nodePositions[orphan.id] = { x: 0, y: 0 }
-    expect(validateFunnel(document).some((issue) => issue.code === 'unreachable_node' && issue.nodeId === orphan.id)).toBe(true)
+describe('формат, ссылки и версии', () => {
+  it('старый расширенный файл отклоняется понятным сообщением', () => {
+    const result = parseAndMigrateFunnelDocument({ documentType: 'funnel', schemaVersion: '1.0.0' })
+    expect(result.success).toBe(false)
+    if (!result.success) expect(result.errors[0]).toContain('старой расширенной версии')
   })
 
-  it('находит отсутствующий переход варианта', () => {
-    const document = structuredClone(demoFunnel)
-    document.edges = document.edges.filter((edge) => edge.id !== 'edge_source_social')
-    expect(validateFunnel(document).some((issue) => issue.code === 'missing_branch' && issue.nodeId === 'demo_source')).toBe(true)
+  it('создаёт уникальные стабильные tracking-коды', () => {
+    const document = createEmptyFunnel()
+    expect(uniqueTrackingCode(document, 'Instagram', 'Test July')).toBe('instagram_test_july')
+    document.bot.trackingLinks.push({ id: 'link', name: 'Первая', code: 'instagram_test_july', source: 'Instagram', campaign: 'Test July', active: true })
+    expect(uniqueTrackingCode(document, 'Instagram', 'Test July')).toBe('instagram_test_july_2')
+    expect(document.bot.trackingLinks[0].code).toBe('instagram_test_july')
   })
 
-  it('проверяет повторяющиеся assetKey', () => {
-    const document = structuredClone(demoFunnel)
-    document.assets.push({ ...structuredClone(document.assets[0]), id: 'asset_duplicate' })
-    expect(validateFunnel(document).some((issue) => issue.code === 'duplicate_key' && issue.section === 'media')).toBe(true)
+  it('строит Telegram deep link из username и кода', () => {
+    expect(telegramDeepLink('@my_bot', 'instagram_test_july')).toBe('https://t.me/my_bot?start=instagram_test_july')
+    expect(telegramDeepLink('', 'code')).toBeNull()
   })
 
-  it('вычисляет конверсию и корректно обрабатывает пустой снимок', () => {
-    expect(analyticsForNode(demoFunnel, 'demo_test')).toEqual({ entered: 1488, completed: 1210, dropped: 278, conversion: (1210 / 1488) * 100 })
-    const empty = createEmptyFunnel()
-    expect(analyticsForNode(empty, empty.funnel.startNodeId)).toEqual({ entered: 0, completed: 0, dropped: 0, conversion: 0 })
+  it('новая версия сбрасывает только статистику', () => {
+    const source = freshDemoFunnel()
+    const next = createNewVersion(source)
+    expect(next.funnel.version).toBe(2)
+    expect(next.analytics.snapshotAt).toBeNull()
+    expect(next.analytics.summary.started).toBe(0)
+    expect(next.nodes).toEqual(source.nodes)
+    expect(source.analytics.summary.started).toBeGreaterThan(0)
   })
 })

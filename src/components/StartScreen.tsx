@@ -1,4 +1,4 @@
-import { AlertTriangle, BarChart3, Blocks, CheckCircle2, Clock3, Copy, Download, FileJson, FolderOpen, GitCompareArrows, Plus, Search, Sparkles, Trash2, UploadCloud, WandSparkles, X, XCircle } from 'lucide-react'
+import { AlertTriangle, BarChart3, Blocks, CheckCircle2, Clock3, Copy, Download, FileJson, FolderOpen, Plus, Search, Sparkles, Trash2, UploadCloud, X, XCircle } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import type { DraftSummary, FunnelDocument, ImportResultSuccess } from '../model/types'
 import { downloadFunnel, importFunnelFile } from '../services/files'
@@ -13,7 +13,6 @@ interface StartScreenProps {
   onDuplicate: (document: FunnelDocument) => void
   onDelete: (draft: DraftSummary) => void
   onAnalytics: (document: FunnelDocument) => void
-  onCompare: (document: FunnelDocument) => void
   onNewVersion: (document: FunnelDocument) => void
 }
 
@@ -25,7 +24,7 @@ export function StartScreen(props: StartScreenProps) {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<'all' | DraftSummary['status']>('all')
   const [sort, setSort] = useState<'updated' | 'name' | 'version'>('updated')
-  const visibleDrafts = useMemo(() => props.drafts.filter((draft) => (status === 'all' || draft.status === status) && `${draft.name} ${draft.document.funnel.key} ${draft.document.funnel.tags.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name, 'ru') : sort === 'version' ? b.version - a.version : b.updatedAt.localeCompare(a.updatedAt)), [props.drafts, query, sort, status])
+  const visibleDrafts = useMemo(() => props.drafts.filter((draft) => (status === 'all' || draft.status === status) && draft.name.toLowerCase().includes(query.trim().toLowerCase())).sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name, 'ru') : sort === 'version' ? b.version - a.version : b.updatedAt.localeCompare(a.updatedAt)), [props.drafts, query, sort, status])
 
   const processFile = async (file?: File) => {
     if (!file) return
@@ -41,7 +40,7 @@ export function StartScreen(props: StartScreenProps) {
       <main className="home-content">
         <section className="welcome-section">
           <div className="welcome-copy"><span className="eyebrow"><Sparkles size={14} /> Визуальный конструктор</span><h1>Соберите путь клиента<br />без кода и backend</h1><p>Создавайте Telegram-воронки, проверяйте логику и передавайте проект одним файлом <code>.funnel</code>.</p></div>
-          <div className="welcome-visual" aria-hidden="true"><div className="visual-grid" /><div className="mini-node start"><span>●</span> Старт</div><div className="visual-line one" /><div className="mini-node message"><span>▣</span> Сообщение</div><div className="visual-line two" /><div className="mini-node choice"><span>☷</span> Выбор</div></div>
+          <div className="welcome-visual" aria-hidden="true"><div className="visual-grid" /><div className="mini-node start"><span>●</span> Старт</div><div className="visual-line one" /><div className="mini-node message"><span>▣</span> Сообщение</div><div className="visual-line two" /><div className="mini-node choice"><span>☷</span> Кнопки → ветки</div></div>
         </section>
         <section className="primary-actions">
           <button className="action-card create" onClick={props.onCreate}><span className="action-icon"><Plus size={25} /></span><span><strong>Создать новую воронку</strong><small>Начать с чистого полотна</small></span><i>→</i></button>
@@ -52,7 +51,7 @@ export function StartScreen(props: StartScreenProps) {
 
         <section className="drafts-section">
           <div className="drafts-heading"><div><span className="eyebrow">Локальное хранилище</span><h2>Мои воронки</h2></div><span>{props.drafts.length} {plural(props.drafts.length, ['версия', 'версии', 'версий'])}</span></div>
-          {props.drafts.length > 0 && <div className="draft-tools"><label><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Поиск по названию, ключу или тегу" /></label><select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">Все статусы</option><option value="draft">Черновики</option><option value="published">Опубликованные</option><option value="archived">Архив</option></select><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="updated">Сначала изменённые</option><option value="name">По названию</option><option value="version">По версии</option></select></div>}
+          {props.drafts.length > 0 && <div className="draft-tools"><label><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Поиск по названию" /></label><select value={status} onChange={(event) => setStatus(event.target.value as typeof status)}><option value="all">Все статусы</option><option value="draft">Черновики</option><option value="published">Опубликованные</option><option value="archived">Архив</option></select><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="updated">Сначала изменённые</option><option value="name">По названию</option><option value="version">По версии</option></select></div>}
           {props.loading ? <div className="drafts-loading">Загружаем черновики…</div> : visibleDrafts.length ? (
             <div className="draft-grid">{visibleDrafts.map((draft) => <DraftCard key={draft.id} draft={draft} {...props} />)}</div>
           ) : props.drafts.length ? (
@@ -62,7 +61,7 @@ export function StartScreen(props: StartScreenProps) {
           )}
         </section>
       </main>
-      <footer className="home-footer"><span>Данные хранятся только в этом браузере</span><span>Формат .funnel · schema 1.0.0</span></footer>
+      <footer className="home-footer"><span>Данные хранятся только в этом браузере</span><span>Упрощённый формат .funnel</span></footer>
 
       {dragging && <div className="drop-overlay" onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => event.target === event.currentTarget && setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); processFile(event.dataTransfer.files[0]) }}><UploadCloud size={42} /><strong>Отпустите файл .funnel</strong><span>Мы проверим его до открытия</span></div>}
       {imported && <ImportDialog result={imported} onClose={() => setImported(null)} onOpen={() => { props.onOpen(imported.document); setImported(null) }} onSave={async () => { await props.onImportSave(imported.document); setImported(null) }} />}
@@ -71,15 +70,16 @@ export function StartScreen(props: StartScreenProps) {
   )
 }
 
-function DraftCard({ draft, onOpen, onDuplicate, onDelete, onAnalytics, onCompare, onNewVersion }: { draft: DraftSummary; onOpen: (document: FunnelDocument) => void; onDuplicate: (document: FunnelDocument) => void; onDelete: (draft: DraftSummary) => void; onAnalytics: (document: FunnelDocument) => void; onCompare: (document: FunnelDocument) => void; onNewVersion: (document: FunnelDocument) => void }) {
-  return <article className="draft-card"><div className="draft-card__top"><span className="draft-file-icon"><FileJson size={21} /></span><span className={`draft-status ${draft.status}`}>{statusLabel(draft.status)}</span><span className="version-pill">v{draft.version}</span><button className="mini-icon danger draft-delete" onClick={() => onDelete(draft)} title="Удалить"><Trash2 size={16} /></button></div><h3>{draft.name}</h3><code className="draft-key">{draft.document.funnel.key}</code><div className="draft-health">{draft.errors > 0 ? <span className="error"><XCircle size={13} /> {draft.errors} ошибок</span> : <span className="ok"><CheckCircle2 size={13} /> Без ошибок</span>}{draft.warnings > 0 && <span className="warning"><AlertTriangle size={13} /> {draft.warnings}</span>}<span>schema {draft.schemaVersion}</span></div><div className="draft-meta"><span><Blocks size={14} /> {draft.nodeCount} {plural(draft.nodeCount, ['блок', 'блока', 'блоков'])}</span><span><Clock3 size={14} /> {formatRelative(draft.updatedAt)}</span></div><div className="draft-card__actions"><button className="button primary" onClick={() => onOpen(draft.document)}>Открыть</button><button className="icon-button bordered" onClick={() => onDuplicate(draft.document)} title="Дублировать"><Copy size={16} /></button><button className="icon-button bordered" onClick={() => downloadFunnel(draft.document)} title="Экспорт"><Download size={16} /></button>{draft.document.analytics.snapshotAt && <button className="icon-button bordered" onClick={() => onAnalytics(draft.document)} title="Статистика"><BarChart3 size={16} /></button>}</div><div className="draft-secondary-actions"><button onClick={() => onNewVersion(draft.document)}><WandSparkles size={13} /> Новая версия</button><button onClick={() => onCompare(draft.document)}><GitCompareArrows size={13} /> Сравнить</button></div></article>
+function DraftCard({ draft, onOpen, onDuplicate, onDelete, onAnalytics, onNewVersion }: { draft: DraftSummary; onOpen: (document: FunnelDocument) => void; onDuplicate: (document: FunnelDocument) => void; onDelete: (draft: DraftSummary) => void; onAnalytics: (document: FunnelDocument) => void; onNewVersion: (document: FunnelDocument) => void }) {
+  return <article className="draft-card"><div className="draft-card__top"><span className="draft-file-icon"><FileJson size={21} /></span><span className={`draft-status ${draft.status}`}>{statusLabel(draft.status)}</span><span className="version-pill">v{draft.version}</span><button className="mini-icon danger draft-delete" onClick={() => onDelete(draft)} title="Удалить"><Trash2 size={16} /></button></div><h3>{draft.name}</h3><div className="draft-health">{draft.errors > 0 ? <span className="error"><XCircle size={13} /> {draft.errors} ошибок</span> : <span className="ok"><CheckCircle2 size={13} /> Без ошибок</span>}{draft.warnings > 0 && <span className="warning"><AlertTriangle size={13} /> {draft.warnings}</span>}</div><div className="draft-meta"><span><Blocks size={14} /> {draft.nodeCount} {plural(draft.nodeCount, ['блок', 'блока', 'блоков'])}</span><span><Clock3 size={14} /> {formatRelative(draft.updatedAt)}</span></div><div className="draft-card__actions"><button className="button primary" onClick={() => onOpen(draft.document)}>Открыть</button><button className="icon-button bordered" onClick={() => onDuplicate(draft.document)} title="Дублировать"><Copy size={16} /></button><button className="icon-button bordered" onClick={() => downloadFunnel(draft.document)} title="Скачать"><Download size={16} /></button>{draft.document.analytics.snapshotAt && <button className="icon-button bordered" onClick={() => onAnalytics(draft.document)} title="Статистика"><BarChart3 size={16} /></button>}</div><div className="draft-secondary-actions"><button onClick={() => onNewVersion(draft.document)}><Copy size={13} /> Новая версия</button></div></article>
 }
 
 function ImportDialog({ result, onClose, onOpen, onSave }: { result: ImportResultSuccess; onClose: () => void; onOpen: () => void; onSave: () => void }) {
   const { document } = result
-  const errors = result.issues.filter((issue) => issue.severity === 'error').length
-  const warnings = result.issues.filter((issue) => issue.severity === 'warning').length
-  return <div className="modal-backdrop"><section className="dialog import-dialog"><button className="icon-button dialog-close" onClick={onClose}><X size={19} /></button><div className={`dialog-status ${errors ? 'warning' : 'success'}`}><FileJson size={27} /></div><h2>{result.migration ? 'Старая версия обновлена' : 'Файл успешно проверен'}</h2><p className="dialog-lead">«{document.funnel.name}», версия {document.funnel.version} · {document.nodes.length} {plural(document.nodes.length, ['блок', 'блока', 'блоков'])}</p>{result.migration && <div className="migration-note"><WandSparkles size={17} /><span><strong>{result.migration.from} → {result.migration.to}</strong>{result.migration.messages.join(' ')}</span></div>}{result.analyticsIsolated && <div className="migration-note warning"><AlertTriangle size={17} /><span><strong>Статистика изолирована</strong>Структура сохранена и может быть открыта.</span></div>}<div className="import-summary"><span>Схема <strong>{document.schemaVersion}</strong></span><span>Проверка <strong>{errors ? `${errors} ошибок` : warnings ? `${warnings} предупреждений` : 'готово'}</strong></span><span>Медиа <strong>{document.assets.length}</strong></span></div><div className="dialog-actions"><button className="button secondary" onClick={onSave}>Сохранить в черновики</button><button className="button primary" onClick={onOpen}>Открыть проект</button></div></section></div>
+  const issues = result.issues ?? []
+  const errors = issues.filter((issue) => issue.severity === 'error').length
+  const warnings = issues.filter((issue) => issue.severity === 'warning').length
+  return <div className="modal-backdrop"><section className="dialog import-dialog"><button className="icon-button dialog-close" onClick={onClose}><X size={19} /></button><div className={`dialog-status ${errors ? 'warning' : 'success'}`}><FileJson size={27} /></div><h2>Файл успешно проверен</h2><p className="dialog-lead">«{document.funnel.name}», версия {document.funnel.version} · {document.nodes.length} {plural(document.nodes.length, ['блок', 'блока', 'блоков'])}</p><div className="import-summary"><span>Проверка <strong>{errors ? `${errors} ошибок` : warnings ? `${warnings} предупреждений` : 'готово'}</strong></span><span>Тесты <strong>{document.tests.length}</strong></span><span>Медиа <strong>{document.assets.length}</strong></span></div><div className="dialog-actions"><button className="button secondary" onClick={onSave}>Сохранить в черновики</button><button className="button primary" onClick={onOpen}>Открыть проект</button></div></section></div>
 }
 
 function ErrorDialog({ errors, onClose }: { errors: string[]; onClose: () => void }) {

@@ -1,204 +1,220 @@
-import { createEmptyFunnel, createNode, emptyAnalytics } from './funnel'
-import type {
-  ChoiceData, ConditionData, ConsentData, ExternalLinkData, FormData, FormulaData,
-  FunnelDocument, FunnelNode, MediaData, MessageData, ProductBlockData, ResultBlockData,
-  SetVariableData, TestBlockData,
-} from './types'
+import { createEmptyFunnel, emptyAnalytics } from './funnel'
+import type { FunnelDocument, FunnelNode, FunnelTest, MediaAsset, Product } from './types'
 
-const position = (x: number, y: number) => ({ x, y })
-const makeNode = (type: FunnelNode['type'], id: string, title: string) => {
-  const node = createNode(type)
-  node.id = id
-  node.data.title = title
-  return node
+const scaleDefinitions = [
+  ['scale_s1', 'S1', 'Быть нужной', '#7c5ce7'],
+  ['scale_s2', 'S2', 'Контроль', '#2f80ed'],
+  ['scale_s3', 'S3', 'Достижения', '#f2994a'],
+  ['scale_s4', 'S4', 'Безопасность', '#27ae60'],
+  ['scale_s5', 'S5', 'Признание', '#eb5757'],
+  ['scale_s6', 'S6', 'Свобода', '#00a6a6'],
+  ['scale_s7', 'S7', 'Близость', '#b35bd4'],
+] as const
+
+function node(id: string, type: FunnelNode['type'], data: FunnelNode['data']): FunnelNode {
+  return { id, type, data }
 }
 
-function buildDemo(): FunnelDocument {
-  const document = createEmptyFunnel('7 внутренних механизмов')
-  const createdAt = '2026-07-18T09:00:00.000Z'
-  document.project = {
-    id: 'project_demo_mechanisms',
-    name: 'Диагностика «7 внутренних механизмов»',
-    description: 'Полная демонстрация теста, сегментации, результата, формы и продукта.',
-  }
-  document.funnel = {
-    id: 'funnel_demo_mechanisms', key: 'seven_inner_mechanisms', name: '7 внутренних механизмов',
-    description: 'Диагностика ведущего внутреннего механизма с персональным результатом и предложением.',
-    version: 1, status: 'draft', startNodeId: 'demo_start', entryKey: 'main', tags: ['demo', 'diagnostic'],
-    createdAt, updatedAt: '2026-07-18T12:30:00.000Z',
-  }
-
-  document.variables = [
-    { id: 'var_lead_score', key: 'lead_score', name: 'Баллы лида', type: 'number', description: 'Служебный приоритет', defaultValue: 0, scope: 'session', sensitive: false, transferable: true, printable: false },
-    { id: 'var_contact_name', key: 'contact_name', name: 'Имя контакта', type: 'string', description: 'Имя из формы', defaultValue: '', scope: 'user', sensitive: true, transferable: true, printable: true },
-    { id: 'var_contact_email', key: 'contact_email', name: 'E-mail контакта', type: 'string', description: 'E-mail из формы', defaultValue: '', scope: 'user', sensitive: true, transferable: true, printable: true },
-    { id: 'var_result', key: 'diagnostic_result', name: 'Результат диагностики', type: 'object', description: 'Полный рассчитанный результат', defaultValue: {}, scope: 'result', sensitive: false, transferable: true, printable: true },
-    { id: 'var_consent', key: 'consent_given', name: 'Согласие', type: 'boolean', description: 'Согласие на обработку данных', defaultValue: false, scope: 'user', sensitive: true, transferable: false, printable: false },
-    { id: 'var_source_label', key: 'source_label', name: 'Метка источника', type: 'string', description: 'Уточнённый источник входа', defaultValue: '', scope: 'session', sensitive: false, transferable: true, printable: false },
-  ]
-
-  const scaleDefinitions = [
-    ['scale_control', 'S1', 'Контроль', '#5267e9'],
-    ['scale_recognition', 'S2', 'Признание', '#a855f7'],
-    ['scale_security', 'S3', 'Безопасность', '#14b8a6'],
-    ['scale_freedom', 'S4', 'Свобода', '#f59e0b'],
-    ['scale_belonging', 'S5', 'Принадлежность', '#ec4899'],
-    ['scale_exploration', 'S6', 'Исследование', '#0ea5e9'],
-    ['scale_creation', 'S7', 'Созидание', '#22c55e'],
-  ] as const
-  const answerText = ['Навожу порядок и беру управление', 'Показываю результат и получаю отклик', 'Проверяю риски и создаю опору', 'Оставляю пространство для выбора', 'Ищу людей, с которыми мы вместе', 'Пробую новое и задаю вопросы', 'Собираю идею в работающий результат']
-  document.tests = [{
-    id: 'test_mechanisms', key: 'inner_mechanisms', name: '7 внутренних механизмов',
-    description: 'Семь ситуационных вопросов определяют ведущую стратегию.', status: 'draft',
-    shuffleQuestions: false, resultSetId: 'result_set_mechanisms', resultVariableKey: 'diagnostic_result',
-    scales: scaleDefinitions.map(([id, code, name, color]) => ({ id, code, name, color, description: `Выраженность механизма «${name}»`, direction: 'strength', normalization: 'dynamic_percent', precision: 0 })),
-    questions: Array.from({ length: 7 }, (_, questionIndex) => ({
-      id: `test_question_${questionIndex + 1}`, type: 'single' as const,
-      text: ['Когда появляется сложная задача, что вы делаете первым?', 'Что сильнее всего возвращает энергию?', 'Как вы принимаете важное решение?', 'Что для вас означает хороший рабочий день?', 'Как вы ведёте себя в новой команде?', 'Что помогает пройти период неопределённости?', 'Какой результат вызывает настоящую гордость?'][questionIndex],
-      enabled: true, required: true, shuffleAnswers: questionIndex > 1,
-      answers: scaleDefinitions.map(([scaleId], answerIndex) => ({
-        id: `answer_q${questionIndex + 1}_${answerIndex + 1}`, text: answerText[answerIndex],
-        value: `mechanism_${answerIndex + 1}`, enabled: true,
-        scoring: [{ id: `score_q${questionIndex + 1}_${answerIndex + 1}`, type: 'add' as const, scaleId, value: 1 }],
-      })),
+function buildTest(): FunnelTest {
+  const scales = scaleDefinitions.map(([id, code, name, color]) => ({ id, code, name, color }))
+  const questions = Array.from({ length: 7 }, (_, questionIndex) => ({
+    id: `question_${questionIndex + 1}`,
+    text: [
+      'Что вам важнее всего в сложной ситуации?',
+      'Как вы принимаете важные решения?',
+      'Что сильнее всего мотивирует вас двигаться дальше?',
+      'Как вы реагируете на неопределённость?',
+      'Чего вы ждёте от окружающих?',
+      'Какая среда помогает вам раскрыться?',
+      'Что для вас означает хороший результат?',
+    ][questionIndex],
+    type: 'single' as const,
+    enabled: true,
+    required: true,
+    shuffleAnswers: false,
+    answers: scales.map((scale, answerIndex) => ({
+      id: `answer_${questionIndex + 1}_${answerIndex + 1}`,
+      text: [
+        'Помочь и быть полезной',
+        'Понять и взять ситуацию под контроль',
+        'Поставить цель и достичь её',
+        'Создать надёжный план',
+        'Получить признание результата',
+        'Сохранить свободу выбора',
+        'Остаться в тёплом контакте',
+      ][answerIndex],
+      scores: { [scale.id]: 3, [scales[(answerIndex + 1) % scales.length].id]: 1 },
     })),
-  }]
-
-  const mechanismResults = scaleDefinitions.map(([scaleId, code, name], index) => ({
-    id: `result_${index + 1}`, code, title: `Ваш механизм — ${name}`,
-    shortText: `${name} сейчас чаще других направляет ваши решения.`,
-    text: `Механизм «${name}» помогает вам двигаться вперёд. Важно использовать его осознанно и подключать остальные стратегии по ситуации.`,
-    sections: [{ id: `result_section_${index + 1}`, title: 'Сильная сторона', text: 'Вы быстро замечаете подходящие возможности и превращаете внутренний импульс в действие.' }],
-    recommendations: ['Отследите три ситуации, где этот механизм включается автоматически.', 'Выберите один дополняющий механизм на ближайшую неделю.'],
-    assetIds: [], buttons: [], contentVersion: 1, scaleIds: [scaleId], combined: false,
   }))
-  document.resultSets = [{
-    id: 'result_set_mechanisms', key: 'inner_mechanisms_results', name: 'Результаты семи механизмов',
-    results: [...mechanismResults, {
-      id: 'result_combined_s1_s2', code: 'S1_S2', title: 'Контроль + Признание',
-      shortText: 'Два механизма выражены почти одинаково.',
-      text: 'Вы одновременно стремитесь управлять процессом и видеть признание результата. Эта связка особенно сильна в лидерских задачах.',
-      sections: [{ id: 'result_combined_section', title: 'Баланс', text: 'Проверяйте, где важнее структура, а где — открытый отклик от людей.' }],
-      recommendations: ['Разделите критерии контроля процесса и признания результата.', 'Договоритесь с собой о достаточном уровне каждого механизма.'],
-      assetIds: ['asset_cover'], buttons: [], contentVersion: 1, scaleIds: ['scale_control', 'scale_recognition'], combined: true,
+  const results = scales.map((scale) => ({
+    id: `result_${scale.code.toLowerCase()}`,
+    scaleId: scale.id,
+    name: scale.name,
+    shortText: `Ваш ведущий механизм — «${scale.name}».`,
+    fullText: `Механизм «${scale.name}» помогает вам ориентироваться в важных ситуациях и принимать решения.`,
+    recommendations: 'Замечайте, когда этот механизм поддерживает вас, а когда ограничивает выбор. Попробуйте одну небольшую альтернативную реакцию на этой неделе.',
+    assetId: 'asset_guide',
+    buttons: [],
+  }))
+  return {
+    id: 'test_mechanisms',
+    name: '7 внутренних механизмов',
+    description: 'Подробная диагностика ведущих способов реагирования.',
+    shuffleQuestions: false,
+    scales,
+    questions,
+    results,
+    combinedResults: [{
+      id: 'result_s1_s2',
+      scaleIds: ['scale_s1', 'scale_s2'],
+      name: 'Быть нужной + Контроль',
+      shortText: 'У вас близки два ведущих механизма.',
+      fullText: 'Вы сочетаете стремление быть полезной с потребностью ясно понимать и контролировать происходящее.',
+      recommendations: 'Разделяйте помощь по запросу и попытку взять на себя лишнюю ответственность.',
+      assetId: 'asset_guide',
+      buttons: [],
     }],
-    rules: [
-      { id: 'rule_close', type: 'closeness', closenessPoints: 8, priority: 10 },
-      { id: 'rule_top', type: 'top', topN: 2, priority: 20 },
-      { id: 'rule_fallback', type: 'fallback', resultCode: 'S1', priority: 100 },
-    ],
-    fallbackResultCode: 'S1', tieBreaker: 'scale_order',
-  }]
+    calculation: { method: 'dynamic_percent', proximityThreshold: 8, useCombinedResults: true, missingCombination: 'primary' },
+  }
+}
 
-  document.assets = [
-    { id: 'asset_guide', assetKey: 'mechanisms_guide_pdf', displayName: 'Гайд по семи механизмам', expectedType: 'document', required: true, description: 'PDF-памятка, которую получает пользователь', expectedMimeTypes: ['application/pdf'], recommendedFilename: '7-mehanizmov.pdf', maxSizeMb: 20 },
-    { id: 'asset_cover', assetKey: 'mechanisms_cover', displayName: 'Обложка диагностики', expectedType: 'image', required: false, description: 'Обложка результата', expectedMimeTypes: ['image/jpeg', 'image/png'], maxSizeMb: 10 },
-    { id: 'asset_intro_video', assetKey: 'mechanisms_intro_video', displayName: 'Видео-знакомство', expectedType: 'video', required: false, description: 'Короткое знакомство перед тестом', expectedMimeTypes: ['video/mp4'], maxSizeMb: 50, maxDurationSeconds: 180 },
-    { id: 'asset_day3_voice', assetKey: 'mechanisms_day3_voice', displayName: 'Голосовая практика третьего дня', expectedType: 'voice', required: false, description: 'Персональное голосовое упражнение', expectedMimeTypes: ['audio/ogg'], maxSizeMb: 20, maxDurationSeconds: 600 },
+export function freshDemoFunnel(): FunnelDocument {
+  const document = createEmptyFunnel('7 внутренних механизмов')
+  document.project.name = 'Психологическая диагностика'
+  document.funnel.description = 'Демонстрационная Telegram-воронка с ветками, тестом, заявкой и продуктом.'
+  document.bot.displayName = 'Диагностика механизмов'
+  document.bot.username = 'mechanisms_demo_bot'
+  document.bot.trackingLinks = [
+    { id: 'tracking_instagram', name: 'Instagram — Reels про тест', code: 'instagram_test_july', source: 'instagram', campaign: 'test_july', content: 'reels_03', active: true },
+    { id: 'tracking_channel', name: 'Telegram-канал', code: 'telegram_channel', source: 'telegram', campaign: 'channel', active: true },
   ]
-  document.products = [{
-    id: 'product_deep_report', productKey: 'deep_mechanisms_report', name: 'Расширенный разбор',
-    description: 'Персональный PDF-разбор с упражнениями', type: 'digital', priceMinor: 149000, currency: 'RUB', active: true,
-    provider: 'yookassa', assetIds: ['asset_guide'], personalization: scaleDefinitions.map(([, code]) => ({ resultCode: code, assetId: 'asset_guide' })), fallbackAssetId: 'asset_guide',
-    successText: 'Оплата принята. Материал готов к выдаче.', repurchasePolicy: 'redeliver',
-    analytics: { opened: 'product_opened', paid: 'product_paid' },
+
+  const assets: MediaAsset[] = [
+    { id: 'asset_cover', key: 'test_cover', name: 'Обложка теста', type: 'image', required: true, logicalRef: 'telegram:file/test-cover' },
+    { id: 'asset_guide', key: 'personal_guide', name: 'PDF-памятка по результату', type: 'document', required: true, logicalRef: 'telegram:file/personal-guide' },
+  ]
+  const products: Product[] = [{
+    id: 'product_report',
+    key: 'deep_report',
+    name: 'Подробный персональный отчёт',
+    description: 'Расширенный разбор механизмов и практические рекомендации.',
+    price: 1490,
+    active: true,
+    assetId: 'asset_guide',
+    afterPurchaseText: 'Спасибо за покупку! Отчёт будет отправлен ботом.',
   }]
+  document.assets = assets
+  document.products = products
+  document.tests = [buildTest()]
 
-  const start = makeNode('start', 'demo_start', 'Старт диагностики')
-  const welcome = makeNode('message', 'demo_welcome', 'Приветствие')
-  Object.assign(welcome.data as MessageData, { text: 'Здравствуйте, {{user.firstName | default: "друг"}}! За несколько минут мы определим ваш ведущий внутренний механизм.', buttons: [{ id: 'btn_begin', text: 'Начать диагностику', enabled: true, style: 'primary', action: 'transition', scoring: [] }], continueWithoutButton: false })
-  const source = makeNode('choice', 'demo_source', 'Источник знакомства')
-  Object.assign(source.data as ChoiceData, { prompt: 'Откуда вы узнали о диагностике?', options: [{ id: 'source_social', text: 'Социальные сети', value: 'social', enabled: true, scoring: [] }, { id: 'source_friend', text: 'Рекомендация', value: 'friend', enabled: true, scoring: [] }], variableKey: 'source_label' })
-  const prepare = makeNode('set_variable', 'demo_prepare', 'Подготовить сессию')
-  Object.assign(prepare.data as SetVariableData, { actions: [{ id: 'action_lead_score', type: 'assign', variableKey: 'lead_score', value: 1 }] })
-  const test = makeNode('test', 'demo_test', 'Тест из семи вопросов')
-  Object.assign(test.data as TestBlockData, { testId: 'test_mechanisms', resultVariableKey: 'diagnostic_result', welcomeText: 'Отвечайте так, как чувствуете сейчас.', progressText: 'Вопрос {{current}} из {{total}}' })
-  const condition = makeNode('condition', 'demo_condition', 'Результат рассчитан?')
-  Object.assign(condition.data as ConditionData, { branches: [
-    { id: 'branch_result_ready', name: 'Результат готов', isElse: false, condition: { id: 'condition_result_group', kind: 'group', logic: 'and', not: false, children: [{ id: 'condition_result_rule', kind: 'rule', left: { kind: 'variable', key: 'diagnostic_result' }, operator: 'filled' }] } },
-    { id: 'branch_result_fallback', name: 'Иначе', isElse: true },
-  ] })
-  const formula = makeNode('formula', 'demo_formula', 'Рассчитать приоритет')
-  Object.assign(formula.data as FormulaData, { targetVariableKey: 'lead_score', expression: { id: 'formula_add', kind: 'binary', operator: '+', left: { id: 'formula_source', kind: 'variable', key: 'lead_score' }, right: { id: 'formula_bonus', kind: 'number', value: 4 } } })
-  const result = makeNode('result', 'demo_result', 'Персональный результат')
-  Object.assign(result.data as ResultBlockData, { resultSetId: 'result_set_mechanisms', sourceVariableKey: 'diagnostic_result', singleTemplate: '{{result.main.title}}', combinedTemplate: '{{result.main.title}} + {{result.secondary.title}}' })
-  const fallback = makeNode('message', 'demo_fallback', 'Запасной результат')
-  Object.assign(fallback.data as MessageData, { text: 'Ответы сохранены, но результат не удалось сопоставить. Мы покажем базовую рекомендацию.', buttons: [{ id: 'btn_fallback_continue', text: 'Продолжить', enabled: true, style: 'primary', action: 'transition', scoring: [] }] })
-  const consent = makeNode('consent', 'demo_consent', 'Согласие на связь')
-  Object.assign(consent.data as ConsentData, { text: 'Разрешаю сохранить контакт и прислать материалы по результату.', policyUrl: 'https://example.test/privacy', variableKey: 'consent_given' })
-  const form = makeNode('form', 'demo_form', 'Получить материал')
-  Object.assign(form.data as FormData, { description: 'Оставьте имя и e-mail, чтобы получить памятку.', fields: [{ id: 'field_name', label: 'Ваше имя', type: 'name', required: true, variableKey: 'contact_name' }, { id: 'field_email', label: 'E-mail', type: 'email', required: true, variableKey: 'contact_email' }], recordType: 'application', applicationStatus: 'Новая', consentRequired: true })
-  const product = makeNode('product', 'demo_product', 'Расширенный разбор')
-  Object.assign(product.data as ProductBlockData, { productId: 'product_deep_report', headline: 'Хотите глубже?', description: 'Получите расширенный персональный разбор и упражнения.', displayPrice: '1 490 ₽', payButtonText: 'Получить разбор', allowSkip: true })
-  const media = makeNode('media', 'demo_media', 'Памятка')
-  Object.assign(media.data as MediaData, { assetId: 'asset_guide', assetKey: 'mechanisms_guide_pdf', displayName: 'Гайд по семи механизмам', expectedType: 'document', caption: 'Сохраните краткую памятку по своему результату.' })
-  const reminder = makeNode('reminder', 'demo_reminder', 'Мягкое напоминание')
-  const link = makeNode('external_link', 'demo_link', 'Канал с практиками')
-  Object.assign(link.data as ExternalLinkData, { url: 'https://t.me/example', buttonText: 'Открыть канал', linkType: 'channel' })
-  const done = makeNode('end', 'demo_done', 'Успешное завершение')
-  done.data.text = 'Готово! Ваш результат и материалы сохранены.'
-  const decline = makeNode('end', 'demo_decline', 'Завершение без согласия')
-  decline.data.text = 'Спасибо за честный ответ. Мы ничего не сохраняем.'
-  const noPurchase = makeNode('end', 'demo_no_purchase', 'Завершение без покупки')
-  noPurchase.data.text = 'Базовый результат остаётся у вас. Возвращайтесь, когда будет удобно.'
-  const comment = makeNode('comment', 'demo_comment', 'Подсказка команде')
-  comment.data.text = 'Платёж и реальная доставка файлов здесь только моделируются.'
+  document.nodes = [
+    node(document.funnel.startNodeId, 'start', { title: 'Вход в воронку' }),
+    node('welcome', 'message', {
+      title: 'Приветствие',
+      text: 'Здравствуйте! Пройдите короткую диагностику и узнайте свой ведущий внутренний механизм.',
+      buttons: [
+        { id: 'button_test', text: 'Пройти тест', action: 'branch' },
+        { id: 'button_details', text: 'Узнать подробнее', action: 'branch' },
+        { id: 'button_channel', text: 'Наш Telegram-канал', action: 'url', url: 'https://t.me/example' },
+      ],
+    }),
+    node('cover', 'media', { title: 'Обложка диагностики', assetId: 'asset_cover', caption: '7 механизмов, которые влияют на решения', required: true }),
+    node('details', 'message', {
+      title: 'О диагностике',
+      text: 'Семь вопросов помогут увидеть привычный способ реагирования. Это займёт около трёх минут.',
+      buttons: [{ id: 'button_details_test', text: 'Начать', action: 'branch' }],
+    }),
+    node('test', 'test', { title: 'Тест «7 механизмов»', testId: 'test_mechanisms', welcomeText: 'Отвечайте так, как чувствуете сейчас.' }),
+    node('result', 'message', {
+      title: 'Пояснение результата',
+      text: 'Ваш персональный результат рассчитан. Хотите получить памятку и расширенный разбор?',
+      buttons: [
+        { id: 'button_form', text: 'Получить памятку', action: 'branch' },
+        { id: 'button_offer', text: 'Посмотреть полный отчёт', action: 'branch' },
+      ],
+    }),
+    node('form', 'form', {
+      title: 'Заявка на памятку',
+      introText: 'Оставьте контакт для получения материала.',
+      fields: [
+        { id: 'field_name', type: 'name', label: 'Имя', required: true },
+        { id: 'field_email', type: 'email', label: 'Email', required: true },
+      ],
+      submitText: 'Получить',
+      confirmationText: 'Готово! Памятка закреплена за вами.',
+    }),
+    node('consent', 'consent', {
+      title: 'Согласие на обработку данных',
+      text: 'Я согласен(на) на обработку указанных данных.',
+      policyUrl: 'https://example.com/privacy',
+      acceptText: 'Согласен',
+      declineEnabled: true,
+      declineText: 'Не согласен',
+    }),
+    node('pause', 'timer', { title: 'Пауза перед предложением', duration: 15, unit: 'minutes', respectQuietHours: true }),
+    node('offer', 'product', {
+      title: 'Расширенный отчёт',
+      productId: 'product_report',
+      headline: 'Получите подробный разбор',
+      description: 'Персональные рекомендации и план на 14 дней.',
+      price: 1490,
+      payButtonText: 'Купить за 1 490 ₽',
+      allowSkip: true,
+    }),
+    node('done', 'end', { title: 'Завершение', text: 'Спасибо! Возвращайтесь к своим результатам в любое время.' }),
+    node('declined', 'end', { title: 'Без согласия', text: 'Хорошо. Мы не будем сохранять ваши контактные данные.' }),
+  ]
 
-  document.nodes = [start, welcome, source, prepare, test, condition, formula, result, fallback, consent, form, product, media, reminder, link, done, decline, noPurchase, comment]
+  document.edges = [
+    { id: 'e_start', source: document.funnel.startNodeId, target: 'welcome', sourceHandle: 'next' },
+    { id: 'e_test', source: 'welcome', target: 'cover', sourceHandle: 'button_test', label: 'Пройти тест' },
+    { id: 'e_details', source: 'welcome', target: 'details', sourceHandle: 'button_details', label: 'Узнать подробнее' },
+    { id: 'e_cover', source: 'cover', target: 'test', sourceHandle: 'next' },
+    { id: 'e_details_test', source: 'details', target: 'test', sourceHandle: 'button_details_test', label: 'Начать' },
+    ...document.tests[0].results.map((result) => ({ id: `e_${result.id}`, source: 'test', target: 'result', sourceHandle: result.id, label: result.name })),
+    { id: 'e_combined', source: 'test', target: 'result', sourceHandle: 'result_s1_s2', label: 'Быть нужной + Контроль' },
+    { id: 'e_form', source: 'result', target: 'form', sourceHandle: 'button_form', label: 'Получить памятку' },
+    { id: 'e_offer_direct', source: 'result', target: 'offer', sourceHandle: 'button_offer', label: 'Посмотреть полный отчёт' },
+    { id: 'e_form_submitted', source: 'form', target: 'consent', sourceHandle: 'submitted' },
+    { id: 'e_form_cancelled', source: 'form', target: 'done', sourceHandle: 'cancelled' },
+    { id: 'e_consent', source: 'consent', target: 'pause', sourceHandle: 'accepted' },
+    { id: 'e_decline', source: 'consent', target: 'declined', sourceHandle: 'declined' },
+    { id: 'e_pause', source: 'pause', target: 'offer', sourceHandle: 'next' },
+    { id: 'e_paid', source: 'offer', target: 'done', sourceHandle: 'paid' },
+    { id: 'e_failed', source: 'offer', target: 'done', sourceHandle: 'failed' },
+    { id: 'e_already', source: 'offer', target: 'done', sourceHandle: 'already_purchased' },
+    { id: 'e_skip', source: 'offer', target: 'done', sourceHandle: 'skip' },
+  ]
   document.editor.nodePositions = {
-    demo_start: position(60, 320), demo_welcome: position(330, 320), demo_source: position(600, 320), demo_prepare: position(870, 220),
-    demo_test: position(1140, 220), demo_condition: position(1410, 220), demo_formula: position(1680, 80), demo_result: position(1950, 80),
-    demo_fallback: position(1680, 390), demo_consent: position(2220, 220), demo_form: position(2490, 80), demo_product: position(2760, 80),
-    demo_media: position(3030, 0), demo_reminder: position(3300, 0), demo_link: position(3570, 0), demo_done: position(3840, 0),
-    demo_decline: position(2490, 430), demo_no_purchase: position(3030, 360), demo_comment: position(2740, 570),
+    [document.funnel.startNodeId]: { x: 40, y: 280 },
+    welcome: { x: 310, y: 250 },
+    cover: { x: 610, y: 80 },
+    details: { x: 610, y: 430 },
+    test: { x: 900, y: 250 },
+    result: { x: 1210, y: 250 },
+    form: { x: 1510, y: 80 },
+    consent: { x: 1790, y: 80 },
+    pause: { x: 2070, y: 80 },
+    offer: { x: 1510, y: 430 },
+    done: { x: 2360, y: 250 },
+    declined: { x: 2070, y: 480 },
   }
 
-  const edge = (id: string, from: string, to: string, handle = 'next', label?: string) => ({ id, source: from, target: to, sourceHandle: handle, label })
-  document.edges = [
-    edge('edge_start_welcome', 'demo_start', 'demo_welcome'), edge('edge_welcome_source', 'demo_welcome', 'demo_source', 'btn_begin'),
-    edge('edge_source_social', 'demo_source', 'demo_prepare', 'source_social', 'Социальные сети'), edge('edge_source_friend', 'demo_source', 'demo_prepare', 'source_friend', 'Рекомендация'),
-    edge('edge_prepare_test', 'demo_prepare', 'demo_test'), edge('edge_test_condition', 'demo_test', 'demo_condition', 'completed'),
-    edge('edge_condition_ready', 'demo_condition', 'demo_formula', 'branch_result_ready'), edge('edge_condition_fallback', 'demo_condition', 'demo_fallback', 'branch_result_fallback'),
-    edge('edge_formula_result', 'demo_formula', 'demo_result'), edge('edge_result_consent', 'demo_result', 'demo_consent'), edge('edge_fallback_consent', 'demo_fallback', 'demo_consent', 'btn_fallback_continue'),
-    edge('edge_consent_accept', 'demo_consent', 'demo_form', 'accepted'), edge('edge_consent_decline', 'demo_consent', 'demo_decline', 'declined'),
-    edge('edge_form_product', 'demo_form', 'demo_product', 'success'), edge('edge_product_success', 'demo_product', 'demo_media', 'success'),
-    edge('edge_product_failure', 'demo_product', 'demo_no_purchase', 'failure'), edge('edge_product_cancel', 'demo_product', 'demo_no_purchase', 'cancelled'),
-    edge('edge_product_owned', 'demo_product', 'demo_media', 'already_purchased'), edge('edge_product_skip', 'demo_product', 'demo_no_purchase', 'skip'),
-    edge('edge_media_reminder', 'demo_media', 'demo_reminder'), edge('edge_reminder_link', 'demo_reminder', 'demo_link'), edge('edge_link_done', 'demo_link', 'demo_done'),
-  ]
-
-  document.testScenarios = [{ id: 'scenario_control', name: 'Контроль — основной путь', systemValues: { source: 'demo' }, answers: Object.fromEntries(Array.from({ length: 7 }, (_, index) => [`test_question_${index + 1}`, 'answer_q' + (index + 1) + '_1'])), paymentOutcomes: { product_deep_report: 'success' }, seed: 'demo-control', expectedEndNodeId: 'demo_done', expectedResultCode: 'S1', expectedVariables: { lead_score: 5 } }]
   document.analytics = emptyAnalytics(1)
-  document.analytics.snapshotAt = '2026-07-18T12:30:00.000Z'
-  document.analytics.completeness = { level: 'journeys', sections: ['summary', 'nodes', 'edges', 'tests', 'results', 'products', 'sources', 'contacts'] }
-  document.analytics.summary = { totalUsers: 1840, started: 1612, completed: 987, active: 104, optedOut: 38, averageDurationSeconds: 428 }
-  const entered: Record<string, [number, number]> = { demo_start: [1840, 1612], demo_welcome: [1612, 1540], demo_source: [1540, 1488], demo_prepare: [1488, 1488], demo_test: [1488, 1210], demo_condition: [1210, 1210], demo_formula: [1192, 1192], demo_result: [1192, 1144], demo_fallback: [18, 18], demo_consent: [1162, 1080], demo_form: [1044, 998], demo_product: [998, 987], demo_media: [326, 326], demo_reminder: [326, 320], demo_link: [320, 292], demo_done: [292, 292], demo_decline: [36, 36], demo_no_purchase: [661, 661] }
-  document.analytics.nodes = Object.fromEntries(Object.entries(entered).map(([id, [value, complete]]) => [id, { entered: value, completed: complete, dropped: value - complete }]))
-  document.analytics.edges = Object.fromEntries(document.edges.map((item) => [item.id, { transitions: Math.max(1, document.analytics.nodes[item.target]?.entered ?? 1) }]))
-  document.analytics.tests = { test_mechanisms: { started: 1488, completed: 1210, averageSeconds: 311 } }
-  document.analytics.results = Object.fromEntries(scaleDefinitions.map(([, code, name], index) => [code, { name, users: [286, 201, 184, 166, 151, 124, 98][index] }]))
-  document.analytics.products = { product_deep_report: { viewed: 998, initiated: 402, paid: 326, revenueMinor: 48574000 } }
-  document.analytics.sources = { instagram: { started: 840, completed: 548 }, recommendation: { started: 412, completed: 291 }, direct: { started: 360, completed: 148 } }
-  document.analytics.contacts = [
-    { id: 'contact_001', name: 'Анна К.', username: '@anna_demo', email: 'anna@example.test', source: 'instagram', resultCode: 'S1', createdAt: '2026-07-17T10:15:00.000Z' },
-    { id: 'contact_002', name: 'Михаил П.', username: '@mikhail_demo', source: 'recommendation', resultCode: 'S7', createdAt: '2026-07-18T08:40:00.000Z' },
-    { id: 'contact_003', name: 'Елена С.', phone: '+7 900 000-00-00', source: 'direct', resultCode: 'S3', createdAt: '2026-07-18T11:05:00.000Z' },
-  ]
-  document.analytics.applications = [
-    { id: 'application_001', contactId: 'contact_001', status: 'Новая', source: 'instagram', resultCode: 'S1', createdAt: '2026-07-17T10:24:00.000Z', comment: 'Интерес к расширенному разбору' },
-    { id: 'application_002', contactId: 'contact_003', status: 'В работе', source: 'direct', resultCode: 'S3', createdAt: '2026-07-18T11:18:00.000Z', comment: 'Нужна консультация' },
-  ]
+  document.analytics.snapshotAt = '2026-07-23T12:00:00.000Z'
+  document.analytics.summary = { totalUsers: 1840, started: 1612, completed: 987, applications: 436, purchases: 326, revenue: 485740 }
+  document.analytics.nodes = Object.fromEntries(document.nodes.map((item, index) => [item.id, { entered: Math.max(120, 1612 - index * 95), completed: Math.max(100, 1510 - index * 92) }]))
+  document.analytics.tests = { test_mechanisms: { started: 1488, completed: 1210 } }
+  document.analytics.questions = { question_1: { answered: 1210, skipped: 0 } }
+  document.analytics.results = Object.fromEntries(document.tests[0].results.map((result, index) => [result.id, { name: result.name, users: 250 - index * 20 }]))
+  document.analytics.products = { product_report: { viewed: 998, paid: 326, revenue: 485740 } }
+  document.analytics.sources = {
+    tracking_instagram: { arrived: 930, started: 840, completed: 548, applications: 261, purchases: 184, revenue: 274160 },
+    tracking_channel: { arrived: 460, started: 412, completed: 291, applications: 124, purchases: 98, revenue: 146020 },
+  }
+  document.analytics.contacts = [{ id: 'contact_1', name: 'Анна', username: '@anna', email: 'anna@example.com', source: 'tracking_instagram', result: 'Быть нужной', createdAt: '2026-07-22T10:00:00.000Z' }]
+  document.analytics.applications = [{ id: 'application_1', contact: 'anna@example.com', source: 'tracking_instagram', status: 'Новая', result: 'Быть нужной', createdAt: '2026-07-22T10:01:00.000Z', comment: '' }]
   return document
 }
 
-export const demoFunnel: FunnelDocument = buildDemo()
-
-export function freshDemoFunnel(): FunnelDocument {
-  const copy = structuredClone(demoFunnel)
-  const now = new Date().toISOString()
-  copy.project.id = `project_${crypto.randomUUID()}`
-  copy.funnel.id = `funnel_${crypto.randomUUID()}`
-  copy.funnel.createdAt = now
-  copy.funnel.updatedAt = now
-  return copy
-}
+export const demoFunnel = freshDemoFunnel()

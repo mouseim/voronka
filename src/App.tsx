@@ -85,7 +85,6 @@ function AppRoutes() {
     onDuplicate: duplicate,
     onDelete: remove,
     onAnalytics: (next: FunnelDocument) => open(next, '/analytics'),
-    onCompare: (next: FunnelDocument) => open(next, '/workspace/compare'),
     onNewVersion: newVersion,
   }
 
@@ -94,16 +93,16 @@ function AppRoutes() {
       <Route path="/" element={<StartScreen {...homeProps} />} />
       <Route path="/editor" element={document ? <Editor document={document} onBack={() => navigate('/')} onAnalytics={() => navigate('/analytics')} onWorkspace={(section) => navigate(`/workspace/${section}`)} onSave={manualSave} /> : <Navigate to="/" replace />} />
       <Route path="/analytics" element={document ? <Analytics document={document} onBack={() => navigate('/')} onEdit={() => navigate('/editor')} /> : <Navigate to="/" replace />} />
-      <Route path="/workspace/:section" element={document ? <WorkspaceRoute document={document} drafts={drafts} onBack={() => navigate('/')} onEdit={() => navigate('/editor')} onAnalytics={() => navigate('/analytics')} onSave={manualSave} onRestore={(next) => open(next, '/editor')} /> : <Navigate to="/" replace />} />
+      <Route path="/workspace/:section" element={document ? <WorkspaceRoute document={document} onBack={() => navigate('/')} onEdit={() => navigate('/editor')} onAnalytics={() => navigate('/analytics')} /> : <Navigate to="/" replace />} />
       <Route path="*" element={<Navigate to={location.pathname === '/editor' && document ? '/editor' : '/'} replace />} />
     </Routes>
   </Suspense>
 }
 
-function WorkspaceRoute({ document, drafts, onBack, onEdit, onAnalytics, onSave, onRestore }: { document: FunnelDocument; drafts: DraftSummary[]; onBack: () => void; onEdit: () => void; onAnalytics: () => void; onSave: (document: FunnelDocument) => Promise<void>; onRestore: (document: FunnelDocument) => void }) {
+function WorkspaceRoute({ document, onBack, onEdit, onAnalytics }: { document: FunnelDocument; onBack: () => void; onEdit: () => void; onAnalytics: () => void }) {
   const navigate = useNavigate()
   const params = useParams()
-  const allowed: WorkspaceSection[] = ['variables', 'tests', 'media', 'products', 'settings', 'validation', 'compare', 'history']
-  const section = allowed.includes(params.section as WorkspaceSection) ? params.section as WorkspaceSection : 'variables'
-  return <Workspace document={document} section={section} drafts={drafts} onSection={(next) => navigate(`/workspace/${next}`)} onBack={onBack} onEdit={onEdit} onAnalytics={onAnalytics} onSave={onSave} onRestore={onRestore} />
+  const allowed: WorkspaceSection[] = ['tests', 'media', 'products', 'bot']
+  const section = allowed.includes(params.section as WorkspaceSection) ? params.section as WorkspaceSection : 'tests'
+  return <Workspace document={document} section={section} onSection={(next) => navigate(`/workspace/${next}`)} onBack={onBack} onEdit={onEdit} onAnalytics={onAnalytics} />
 }

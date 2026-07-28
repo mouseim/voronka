@@ -1,0 +1,1229 @@
+{
+  "documentType": "funnel",
+  "schemaVersion": "2.0.0",
+  "project": {
+    "id": "project_5804ea97-3a3a-44ff-9fdd-22a5f4c8230b",
+    "name": "Психологическая диагностика",
+    "description": ""
+  },
+  "funnel": {
+    "id": "funnel_8f1e61a2-294f-4533-af33-f00aac8f599a",
+    "key": "7_vnutrennih_mehanizmov",
+    "name": "7 внутренних механизмов",
+    "description": "Демонстрационная Telegram-воронка с ветками, тестом, заявкой и продуктом.",
+    "version": 1,
+    "status": "draft",
+    "startNodeId": "start_bb00eda0-8e73-498c-88f6-194f926760ea",
+    "createdAt": "2026-07-23T15:43:56.381Z",
+    "updatedAt": "2026-07-23T15:43:56.381Z"
+  },
+  "bot": {
+    "displayName": "Диагностика механизмов",
+    "username": "mechanisms_demo_bot",
+    "timezone": "Europe/Moscow",
+    "inactivityDays": 30,
+    "quietHours": {
+      "enabled": true,
+      "from": "23:00",
+      "to": "09:00",
+      "behavior": "postpone"
+    },
+    "reentryPolicy": "continue",
+    "optOut": {
+      "command": "/stop",
+      "confirmationText": "Вы отписались от фоновых сообщений.",
+      "blockBackground": true,
+      "allowRestart": true
+    },
+    "reminders": {
+      "maxCount": 3,
+      "cancelAfterContinue": true,
+      "respectQuietHours": true
+    },
+    "trackingLinks": [
+      {
+        "id": "tracking_instagram",
+        "name": "Instagram — Reels про тест",
+        "code": "instagram_test_july",
+        "source": "instagram",
+        "campaign": "test_july",
+        "content": "reels_03",
+        "active": true
+      },
+      {
+        "id": "tracking_channel",
+        "name": "Telegram-канал",
+        "code": "telegram_channel",
+        "source": "telegram",
+        "campaign": "channel",
+        "active": true
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "start_bb00eda0-8e73-498c-88f6-194f926760ea",
+      "type": "start",
+      "data": {
+        "title": "Вход в воронку"
+      }
+    },
+    {
+      "id": "welcome",
+      "type": "message",
+      "data": {
+        "title": "Приветствие",
+        "text": "Здравствуйте! Пройдите короткую диагностику и узнайте свой ведущий внутренний механизм.",
+        "buttons": [
+          {
+            "id": "button_test",
+            "text": "Пройти тест",
+            "action": "branch"
+          },
+          {
+            "id": "button_details",
+            "text": "Узнать подробнее",
+            "action": "branch"
+          },
+          {
+            "id": "button_channel",
+            "text": "Наш Telegram-канал",
+            "action": "url",
+            "url": "https://t.me/example"
+          }
+        ]
+      }
+    },
+    {
+      "id": "cover",
+      "type": "media",
+      "data": {
+        "title": "Обложка диагностики",
+        "assetId": "asset_cover",
+        "caption": "7 механизмов, которые влияют на решения",
+        "required": true
+      }
+    },
+    {
+      "id": "details",
+      "type": "message",
+      "data": {
+        "title": "О диагностике",
+        "text": "Семь вопросов помогут увидеть привычный способ реагирования. Это займёт около трёх минут.",
+        "buttons": [
+          {
+            "id": "button_details_test",
+            "text": "Начать",
+            "action": "branch"
+          }
+        ]
+      }
+    },
+    {
+      "id": "test",
+      "type": "test",
+      "data": {
+        "title": "Тест «7 механизмов»",
+        "testId": "test_mechanisms",
+        "welcomeText": "Отвечайте так, как чувствуете сейчас."
+      }
+    },
+    {
+      "id": "result",
+      "type": "message",
+      "data": {
+        "title": "Пояснение результата",
+        "text": "Ваш персональный результат рассчитан. Хотите получить памятку и расширенный разбор?",
+        "buttons": [
+          {
+            "id": "button_form",
+            "text": "Получить памятку",
+            "action": "branch"
+          },
+          {
+            "id": "button_offer",
+            "text": "Посмотреть полный отчёт",
+            "action": "branch"
+          }
+        ]
+      }
+    },
+    {
+      "id": "form",
+      "type": "form",
+      "data": {
+        "title": "Заявка на памятку",
+        "introText": "Оставьте контакт для получения материала.",
+        "fields": [
+          {
+            "id": "field_name",
+            "type": "name",
+            "label": "Имя",
+            "required": true
+          },
+          {
+            "id": "field_email",
+            "type": "email",
+            "label": "Email",
+            "required": true
+          }
+        ],
+        "submitText": "Получить",
+        "confirmationText": "Готово! Памятка закреплена за вами."
+      }
+    },
+    {
+      "id": "consent",
+      "type": "consent",
+      "data": {
+        "title": "Согласие на обработку данных",
+        "text": "Я согласен(на) на обработку указанных данных.",
+        "policyUrl": "https://example.com/privacy",
+        "acceptText": "Согласен",
+        "declineEnabled": true,
+        "declineText": "Не согласен"
+      }
+    },
+    {
+      "id": "pause",
+      "type": "timer",
+      "data": {
+        "title": "Пауза перед предложением",
+        "duration": 15,
+        "unit": "minutes",
+        "respectQuietHours": true
+      }
+    },
+    {
+      "id": "offer",
+      "type": "product",
+      "data": {
+        "title": "Расширенный отчёт",
+        "productId": "product_report",
+        "headline": "Получите подробный разбор",
+        "description": "Персональные рекомендации и план на 14 дней.",
+        "price": 1490,
+        "payButtonText": "Купить за 1 490 ₽",
+        "allowSkip": true
+      }
+    },
+    {
+      "id": "done",
+      "type": "end",
+      "data": {
+        "title": "Завершение",
+        "text": "Спасибо! Возвращайтесь к своим результатам в любое время."
+      }
+    },
+    {
+      "id": "declined",
+      "type": "end",
+      "data": {
+        "title": "Без согласия",
+        "text": "Хорошо. Мы не будем сохранять ваши контактные данные."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_start",
+      "source": "start_bb00eda0-8e73-498c-88f6-194f926760ea",
+      "target": "welcome",
+      "sourceHandle": "next"
+    },
+    {
+      "id": "e_test",
+      "source": "welcome",
+      "target": "cover",
+      "sourceHandle": "button_test",
+      "label": "Пройти тест"
+    },
+    {
+      "id": "e_details",
+      "source": "welcome",
+      "target": "details",
+      "sourceHandle": "button_details",
+      "label": "Узнать подробнее"
+    },
+    {
+      "id": "e_cover",
+      "source": "cover",
+      "target": "test",
+      "sourceHandle": "next"
+    },
+    {
+      "id": "e_details_test",
+      "source": "details",
+      "target": "test",
+      "sourceHandle": "button_details_test",
+      "label": "Начать"
+    },
+    {
+      "id": "e_result_s1",
+      "source": "test",
+      "target": "result",
+      "sourceHandle": "result_s1",
+      "label": "Быть нужной"
+    },
+    {
+      "id": "e_result_s2",
+      "source": "test",
+      "target": "result",
+      "sourceHandle": "result_s2",
+      "label": "Контроль"
+    },
+    {
+      "id": "e_result_s3",
+      "source": "test",
+      "target": "result",
+      "sourceHandle": "result_s3",
+      "label": "Достижения"
+    },
+    {
+      "id": "e_result_s4",
+      "source": "test",
+      "target": "result",
+      "sourceHandle": "result_s4",
+      "label": "Безопасность"
+    },
+    {
+      "id": "e_result_s5",
+      "source": "test",
+      "target": "result",
+      "sourceHandle": "result_s5",
+      "label": "Признание"
+    },
+    {
+      "id": "e_result_s6",
+      "source": "test",
+      "target": "result",
+      "sourceHandle": "result_s6",
+      "label": "Свобода"
+    },
+    {
+      "id": "e_result_s7",
+      "source": "test",
+      "target": "result",
+      "sourceHandle": "result_s7",
+      "label": "Близость"
+    },
+    {
+      "id": "e_combined",
+      "source": "test",
+      "target": "result",
+      "sourceHandle": "result_s1_s2",
+      "label": "Быть нужной + Контроль"
+    },
+    {
+      "id": "e_form",
+      "source": "result",
+      "target": "form",
+      "sourceHandle": "button_form",
+      "label": "Получить памятку"
+    },
+    {
+      "id": "e_offer_direct",
+      "source": "result",
+      "target": "offer",
+      "sourceHandle": "button_offer",
+      "label": "Посмотреть полный отчёт"
+    },
+    {
+      "id": "e_form_submitted",
+      "source": "form",
+      "target": "consent",
+      "sourceHandle": "submitted"
+    },
+    {
+      "id": "e_form_cancelled",
+      "source": "form",
+      "target": "done",
+      "sourceHandle": "cancelled"
+    },
+    {
+      "id": "e_consent",
+      "source": "consent",
+      "target": "pause",
+      "sourceHandle": "accepted"
+    },
+    {
+      "id": "e_decline",
+      "source": "consent",
+      "target": "declined",
+      "sourceHandle": "declined"
+    },
+    {
+      "id": "e_pause",
+      "source": "pause",
+      "target": "offer",
+      "sourceHandle": "next"
+    },
+    {
+      "id": "e_paid",
+      "source": "offer",
+      "target": "done",
+      "sourceHandle": "paid"
+    },
+    {
+      "id": "e_failed",
+      "source": "offer",
+      "target": "done",
+      "sourceHandle": "failed"
+    },
+    {
+      "id": "e_already",
+      "source": "offer",
+      "target": "done",
+      "sourceHandle": "already_purchased"
+    },
+    {
+      "id": "e_skip",
+      "source": "offer",
+      "target": "done",
+      "sourceHandle": "skip"
+    }
+  ],
+  "tests": [
+    {
+      "id": "test_mechanisms",
+      "name": "7 внутренних механизмов",
+      "description": "Подробная диагностика ведущих способов реагирования.",
+      "shuffleQuestions": false,
+      "scales": [
+        {
+          "id": "scale_s1",
+          "code": "S1",
+          "name": "Быть нужной",
+          "color": "#7c5ce7"
+        },
+        {
+          "id": "scale_s2",
+          "code": "S2",
+          "name": "Контроль",
+          "color": "#2f80ed"
+        },
+        {
+          "id": "scale_s3",
+          "code": "S3",
+          "name": "Достижения",
+          "color": "#f2994a"
+        },
+        {
+          "id": "scale_s4",
+          "code": "S4",
+          "name": "Безопасность",
+          "color": "#27ae60"
+        },
+        {
+          "id": "scale_s5",
+          "code": "S5",
+          "name": "Признание",
+          "color": "#eb5757"
+        },
+        {
+          "id": "scale_s6",
+          "code": "S6",
+          "name": "Свобода",
+          "color": "#00a6a6"
+        },
+        {
+          "id": "scale_s7",
+          "code": "S7",
+          "name": "Близость",
+          "color": "#b35bd4"
+        }
+      ],
+      "questions": [
+        {
+          "id": "question_1",
+          "text": "Что вам важнее всего в сложной ситуации?",
+          "type": "single",
+          "enabled": true,
+          "required": true,
+          "shuffleAnswers": false,
+          "answers": [
+            {
+              "id": "answer_1_1",
+              "text": "Помочь и быть полезной",
+              "scores": {
+                "scale_s1": 3,
+                "scale_s2": 1
+              }
+            },
+            {
+              "id": "answer_1_2",
+              "text": "Понять и взять ситуацию под контроль",
+              "scores": {
+                "scale_s2": 3,
+                "scale_s3": 1
+              }
+            },
+            {
+              "id": "answer_1_3",
+              "text": "Поставить цель и достичь её",
+              "scores": {
+                "scale_s3": 3,
+                "scale_s4": 1
+              }
+            },
+            {
+              "id": "answer_1_4",
+              "text": "Создать надёжный план",
+              "scores": {
+                "scale_s4": 3,
+                "scale_s5": 1
+              }
+            },
+            {
+              "id": "answer_1_5",
+              "text": "Получить признание результата",
+              "scores": {
+                "scale_s5": 3,
+                "scale_s6": 1
+              }
+            },
+            {
+              "id": "answer_1_6",
+              "text": "Сохранить свободу выбора",
+              "scores": {
+                "scale_s6": 3,
+                "scale_s7": 1
+              }
+            },
+            {
+              "id": "answer_1_7",
+              "text": "Остаться в тёплом контакте",
+              "scores": {
+                "scale_s7": 3,
+                "scale_s1": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "question_2",
+          "text": "Как вы принимаете важные решения?",
+          "type": "single",
+          "enabled": true,
+          "required": true,
+          "shuffleAnswers": false,
+          "answers": [
+            {
+              "id": "answer_2_1",
+              "text": "Помочь и быть полезной",
+              "scores": {
+                "scale_s1": 3,
+                "scale_s2": 1
+              }
+            },
+            {
+              "id": "answer_2_2",
+              "text": "Понять и взять ситуацию под контроль",
+              "scores": {
+                "scale_s2": 3,
+                "scale_s3": 1
+              }
+            },
+            {
+              "id": "answer_2_3",
+              "text": "Поставить цель и достичь её",
+              "scores": {
+                "scale_s3": 3,
+                "scale_s4": 1
+              }
+            },
+            {
+              "id": "answer_2_4",
+              "text": "Создать надёжный план",
+              "scores": {
+                "scale_s4": 3,
+                "scale_s5": 1
+              }
+            },
+            {
+              "id": "answer_2_5",
+              "text": "Получить признание результата",
+              "scores": {
+                "scale_s5": 3,
+                "scale_s6": 1
+              }
+            },
+            {
+              "id": "answer_2_6",
+              "text": "Сохранить свободу выбора",
+              "scores": {
+                "scale_s6": 3,
+                "scale_s7": 1
+              }
+            },
+            {
+              "id": "answer_2_7",
+              "text": "Остаться в тёплом контакте",
+              "scores": {
+                "scale_s7": 3,
+                "scale_s1": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "question_3",
+          "text": "Что сильнее всего мотивирует вас двигаться дальше?",
+          "type": "single",
+          "enabled": true,
+          "required": true,
+          "shuffleAnswers": false,
+          "answers": [
+            {
+              "id": "answer_3_1",
+              "text": "Помочь и быть полезной",
+              "scores": {
+                "scale_s1": 3,
+                "scale_s2": 1
+              }
+            },
+            {
+              "id": "answer_3_2",
+              "text": "Понять и взять ситуацию под контроль",
+              "scores": {
+                "scale_s2": 3,
+                "scale_s3": 1
+              }
+            },
+            {
+              "id": "answer_3_3",
+              "text": "Поставить цель и достичь её",
+              "scores": {
+                "scale_s3": 3,
+                "scale_s4": 1
+              }
+            },
+            {
+              "id": "answer_3_4",
+              "text": "Создать надёжный план",
+              "scores": {
+                "scale_s4": 3,
+                "scale_s5": 1
+              }
+            },
+            {
+              "id": "answer_3_5",
+              "text": "Получить признание результата",
+              "scores": {
+                "scale_s5": 3,
+                "scale_s6": 1
+              }
+            },
+            {
+              "id": "answer_3_6",
+              "text": "Сохранить свободу выбора",
+              "scores": {
+                "scale_s6": 3,
+                "scale_s7": 1
+              }
+            },
+            {
+              "id": "answer_3_7",
+              "text": "Остаться в тёплом контакте",
+              "scores": {
+                "scale_s7": 3,
+                "scale_s1": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "question_4",
+          "text": "Как вы реагируете на неопределённость?",
+          "type": "single",
+          "enabled": true,
+          "required": true,
+          "shuffleAnswers": false,
+          "answers": [
+            {
+              "id": "answer_4_1",
+              "text": "Помочь и быть полезной",
+              "scores": {
+                "scale_s1": 3,
+                "scale_s2": 1
+              }
+            },
+            {
+              "id": "answer_4_2",
+              "text": "Понять и взять ситуацию под контроль",
+              "scores": {
+                "scale_s2": 3,
+                "scale_s3": 1
+              }
+            },
+            {
+              "id": "answer_4_3",
+              "text": "Поставить цель и достичь её",
+              "scores": {
+                "scale_s3": 3,
+                "scale_s4": 1
+              }
+            },
+            {
+              "id": "answer_4_4",
+              "text": "Создать надёжный план",
+              "scores": {
+                "scale_s4": 3,
+                "scale_s5": 1
+              }
+            },
+            {
+              "id": "answer_4_5",
+              "text": "Получить признание результата",
+              "scores": {
+                "scale_s5": 3,
+                "scale_s6": 1
+              }
+            },
+            {
+              "id": "answer_4_6",
+              "text": "Сохранить свободу выбора",
+              "scores": {
+                "scale_s6": 3,
+                "scale_s7": 1
+              }
+            },
+            {
+              "id": "answer_4_7",
+              "text": "Остаться в тёплом контакте",
+              "scores": {
+                "scale_s7": 3,
+                "scale_s1": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "question_5",
+          "text": "Чего вы ждёте от окружающих?",
+          "type": "single",
+          "enabled": true,
+          "required": true,
+          "shuffleAnswers": false,
+          "answers": [
+            {
+              "id": "answer_5_1",
+              "text": "Помочь и быть полезной",
+              "scores": {
+                "scale_s1": 3,
+                "scale_s2": 1
+              }
+            },
+            {
+              "id": "answer_5_2",
+              "text": "Понять и взять ситуацию под контроль",
+              "scores": {
+                "scale_s2": 3,
+                "scale_s3": 1
+              }
+            },
+            {
+              "id": "answer_5_3",
+              "text": "Поставить цель и достичь её",
+              "scores": {
+                "scale_s3": 3,
+                "scale_s4": 1
+              }
+            },
+            {
+              "id": "answer_5_4",
+              "text": "Создать надёжный план",
+              "scores": {
+                "scale_s4": 3,
+                "scale_s5": 1
+              }
+            },
+            {
+              "id": "answer_5_5",
+              "text": "Получить признание результата",
+              "scores": {
+                "scale_s5": 3,
+                "scale_s6": 1
+              }
+            },
+            {
+              "id": "answer_5_6",
+              "text": "Сохранить свободу выбора",
+              "scores": {
+                "scale_s6": 3,
+                "scale_s7": 1
+              }
+            },
+            {
+              "id": "answer_5_7",
+              "text": "Остаться в тёплом контакте",
+              "scores": {
+                "scale_s7": 3,
+                "scale_s1": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "question_6",
+          "text": "Какая среда помогает вам раскрыться?",
+          "type": "single",
+          "enabled": true,
+          "required": true,
+          "shuffleAnswers": false,
+          "answers": [
+            {
+              "id": "answer_6_1",
+              "text": "Помочь и быть полезной",
+              "scores": {
+                "scale_s1": 3,
+                "scale_s2": 1
+              }
+            },
+            {
+              "id": "answer_6_2",
+              "text": "Понять и взять ситуацию под контроль",
+              "scores": {
+                "scale_s2": 3,
+                "scale_s3": 1
+              }
+            },
+            {
+              "id": "answer_6_3",
+              "text": "Поставить цель и достичь её",
+              "scores": {
+                "scale_s3": 3,
+                "scale_s4": 1
+              }
+            },
+            {
+              "id": "answer_6_4",
+              "text": "Создать надёжный план",
+              "scores": {
+                "scale_s4": 3,
+                "scale_s5": 1
+              }
+            },
+            {
+              "id": "answer_6_5",
+              "text": "Получить признание результата",
+              "scores": {
+                "scale_s5": 3,
+                "scale_s6": 1
+              }
+            },
+            {
+              "id": "answer_6_6",
+              "text": "Сохранить свободу выбора",
+              "scores": {
+                "scale_s6": 3,
+                "scale_s7": 1
+              }
+            },
+            {
+              "id": "answer_6_7",
+              "text": "Остаться в тёплом контакте",
+              "scores": {
+                "scale_s7": 3,
+                "scale_s1": 1
+              }
+            }
+          ]
+        },
+        {
+          "id": "question_7",
+          "text": "Что для вас означает хороший результат?",
+          "type": "single",
+          "enabled": true,
+          "required": true,
+          "shuffleAnswers": false,
+          "answers": [
+            {
+              "id": "answer_7_1",
+              "text": "Помочь и быть полезной",
+              "scores": {
+                "scale_s1": 3,
+                "scale_s2": 1
+              }
+            },
+            {
+              "id": "answer_7_2",
+              "text": "Понять и взять ситуацию под контроль",
+              "scores": {
+                "scale_s2": 3,
+                "scale_s3": 1
+              }
+            },
+            {
+              "id": "answer_7_3",
+              "text": "Поставить цель и достичь её",
+              "scores": {
+                "scale_s3": 3,
+                "scale_s4": 1
+              }
+            },
+            {
+              "id": "answer_7_4",
+              "text": "Создать надёжный план",
+              "scores": {
+                "scale_s4": 3,
+                "scale_s5": 1
+              }
+            },
+            {
+              "id": "answer_7_5",
+              "text": "Получить признание результата",
+              "scores": {
+                "scale_s5": 3,
+                "scale_s6": 1
+              }
+            },
+            {
+              "id": "answer_7_6",
+              "text": "Сохранить свободу выбора",
+              "scores": {
+                "scale_s6": 3,
+                "scale_s7": 1
+              }
+            },
+            {
+              "id": "answer_7_7",
+              "text": "Остаться в тёплом контакте",
+              "scores": {
+                "scale_s7": 3,
+                "scale_s1": 1
+              }
+            }
+          ]
+        }
+      ],
+      "results": [
+        {
+          "id": "result_s1",
+          "scaleId": "scale_s1",
+          "name": "Быть нужной",
+          "shortText": "Ваш ведущий механизм — «Быть нужной».",
+          "fullText": "Механизм «Быть нужной» помогает вам ориентироваться в важных ситуациях и принимать решения.",
+          "recommendations": "Замечайте, когда этот механизм поддерживает вас, а когда ограничивает выбор. Попробуйте одну небольшую альтернативную реакцию на этой неделе.",
+          "assetId": "asset_guide",
+          "buttons": []
+        },
+        {
+          "id": "result_s2",
+          "scaleId": "scale_s2",
+          "name": "Контроль",
+          "shortText": "Ваш ведущий механизм — «Контроль».",
+          "fullText": "Механизм «Контроль» помогает вам ориентироваться в важных ситуациях и принимать решения.",
+          "recommendations": "Замечайте, когда этот механизм поддерживает вас, а когда ограничивает выбор. Попробуйте одну небольшую альтернативную реакцию на этой неделе.",
+          "assetId": "asset_guide",
+          "buttons": []
+        },
+        {
+          "id": "result_s3",
+          "scaleId": "scale_s3",
+          "name": "Достижения",
+          "shortText": "Ваш ведущий механизм — «Достижения».",
+          "fullText": "Механизм «Достижения» помогает вам ориентироваться в важных ситуациях и принимать решения.",
+          "recommendations": "Замечайте, когда этот механизм поддерживает вас, а когда ограничивает выбор. Попробуйте одну небольшую альтернативную реакцию на этой неделе.",
+          "assetId": "asset_guide",
+          "buttons": []
+        },
+        {
+          "id": "result_s4",
+          "scaleId": "scale_s4",
+          "name": "Безопасность",
+          "shortText": "Ваш ведущий механизм — «Безопасность».",
+          "fullText": "Механизм «Безопасность» помогает вам ориентироваться в важных ситуациях и принимать решения.",
+          "recommendations": "Замечайте, когда этот механизм поддерживает вас, а когда ограничивает выбор. Попробуйте одну небольшую альтернативную реакцию на этой неделе.",
+          "assetId": "asset_guide",
+          "buttons": []
+        },
+        {
+          "id": "result_s5",
+          "scaleId": "scale_s5",
+          "name": "Признание",
+          "shortText": "Ваш ведущий механизм — «Признание».",
+          "fullText": "Механизм «Признание» помогает вам ориентироваться в важных ситуациях и принимать решения.",
+          "recommendations": "Замечайте, когда этот механизм поддерживает вас, а когда ограничивает выбор. Попробуйте одну небольшую альтернативную реакцию на этой неделе.",
+          "assetId": "asset_guide",
+          "buttons": []
+        },
+        {
+          "id": "result_s6",
+          "scaleId": "scale_s6",
+          "name": "Свобода",
+          "shortText": "Ваш ведущий механизм — «Свобода».",
+          "fullText": "Механизм «Свобода» помогает вам ориентироваться в важных ситуациях и принимать решения.",
+          "recommendations": "Замечайте, когда этот механизм поддерживает вас, а когда ограничивает выбор. Попробуйте одну небольшую альтернативную реакцию на этой неделе.",
+          "assetId": "asset_guide",
+          "buttons": []
+        },
+        {
+          "id": "result_s7",
+          "scaleId": "scale_s7",
+          "name": "Близость",
+          "shortText": "Ваш ведущий механизм — «Близость».",
+          "fullText": "Механизм «Близость» помогает вам ориентироваться в важных ситуациях и принимать решения.",
+          "recommendations": "Замечайте, когда этот механизм поддерживает вас, а когда ограничивает выбор. Попробуйте одну небольшую альтернативную реакцию на этой неделе.",
+          "assetId": "asset_guide",
+          "buttons": []
+        }
+      ],
+      "combinedResults": [
+        {
+          "id": "result_s1_s2",
+          "scaleIds": [
+            "scale_s1",
+            "scale_s2"
+          ],
+          "name": "Быть нужной + Контроль",
+          "shortText": "У вас близки два ведущих механизма.",
+          "fullText": "Вы сочетаете стремление быть полезной с потребностью ясно понимать и контролировать происходящее.",
+          "recommendations": "Разделяйте помощь по запросу и попытку взять на себя лишнюю ответственность.",
+          "assetId": "asset_guide",
+          "buttons": []
+        }
+      ],
+      "calculation": {
+        "method": "dynamic_percent",
+        "proximityThreshold": 8,
+        "useCombinedResults": true,
+        "missingCombination": "primary"
+      }
+    }
+  ],
+  "assets": [
+    {
+      "id": "asset_cover",
+      "key": "test_cover",
+      "name": "Обложка теста",
+      "type": "image",
+      "required": true,
+      "logicalRef": "telegram:file/test-cover"
+    },
+    {
+      "id": "asset_guide",
+      "key": "personal_guide",
+      "name": "PDF-памятка по результату",
+      "type": "document",
+      "required": true,
+      "logicalRef": "telegram:file/personal-guide"
+    }
+  ],
+  "products": [
+    {
+      "id": "product_report",
+      "key": "deep_report",
+      "name": "Подробный персональный отчёт",
+      "description": "Расширенный разбор механизмов и практические рекомендации.",
+      "price": 1490,
+      "active": true,
+      "assetId": "asset_guide",
+      "afterPurchaseText": "Спасибо за покупку! Отчёт будет отправлен ботом."
+    }
+  ],
+  "analytics": {
+    "snapshotAt": "2026-07-23T12:00:00.000Z",
+    "funnelVersion": 1,
+    "summary": {
+      "totalUsers": 1840,
+      "started": 1612,
+      "completed": 987,
+      "applications": 436,
+      "purchases": 326,
+      "revenue": 485740
+    },
+    "nodes": {
+      "start_bb00eda0-8e73-498c-88f6-194f926760ea": {
+        "entered": 1612,
+        "completed": 1510
+      },
+      "welcome": {
+        "entered": 1517,
+        "completed": 1418
+      },
+      "cover": {
+        "entered": 1422,
+        "completed": 1326
+      },
+      "details": {
+        "entered": 1327,
+        "completed": 1234
+      },
+      "test": {
+        "entered": 1232,
+        "completed": 1142
+      },
+      "result": {
+        "entered": 1137,
+        "completed": 1050
+      },
+      "form": {
+        "entered": 1042,
+        "completed": 958
+      },
+      "consent": {
+        "entered": 947,
+        "completed": 866
+      },
+      "pause": {
+        "entered": 852,
+        "completed": 774
+      },
+      "offer": {
+        "entered": 757,
+        "completed": 682
+      },
+      "done": {
+        "entered": 662,
+        "completed": 590
+      },
+      "declined": {
+        "entered": 567,
+        "completed": 498
+      }
+    },
+    "tests": {
+      "test_mechanisms": {
+        "started": 1488,
+        "completed": 1210
+      }
+    },
+    "questions": {
+      "question_1": {
+        "answered": 1210,
+        "skipped": 0
+      }
+    },
+    "results": {
+      "result_s1": {
+        "name": "Быть нужной",
+        "users": 250
+      },
+      "result_s2": {
+        "name": "Контроль",
+        "users": 230
+      },
+      "result_s3": {
+        "name": "Достижения",
+        "users": 210
+      },
+      "result_s4": {
+        "name": "Безопасность",
+        "users": 190
+      },
+      "result_s5": {
+        "name": "Признание",
+        "users": 170
+      },
+      "result_s6": {
+        "name": "Свобода",
+        "users": 150
+      },
+      "result_s7": {
+        "name": "Близость",
+        "users": 130
+      }
+    },
+    "products": {
+      "product_report": {
+        "viewed": 998,
+        "paid": 326,
+        "revenue": 485740
+      }
+    },
+    "sources": {
+      "tracking_instagram": {
+        "arrived": 930,
+        "started": 840,
+        "completed": 548,
+        "applications": 261,
+        "purchases": 184,
+        "revenue": 274160
+      },
+      "tracking_channel": {
+        "arrived": 460,
+        "started": 412,
+        "completed": 291,
+        "applications": 124,
+        "purchases": 98,
+        "revenue": 146020
+      }
+    },
+    "contacts": [
+      {
+        "id": "contact_1",
+        "name": "Анна",
+        "username": "@anna",
+        "email": "anna@example.com",
+        "source": "tracking_instagram",
+        "result": "Быть нужной",
+        "createdAt": "2026-07-22T10:00:00.000Z"
+      }
+    ],
+    "applications": [
+      {
+        "id": "application_1",
+        "contact": "anna@example.com",
+        "source": "tracking_instagram",
+        "status": "Новая",
+        "result": "Быть нужной",
+        "createdAt": "2026-07-22T10:01:00.000Z",
+        "comment": ""
+      }
+    ]
+  },
+  "editor": {
+    "nodePositions": {
+      "start_bb00eda0-8e73-498c-88f6-194f926760ea": {
+        "x": 40,
+        "y": 280
+      },
+      "welcome": {
+        "x": 310,
+        "y": 250
+      },
+      "cover": {
+        "x": 610,
+        "y": 80
+      },
+      "details": {
+        "x": 610,
+        "y": 430
+      },
+      "test": {
+        "x": 900,
+        "y": 250
+      },
+      "result": {
+        "x": 1210,
+        "y": 250
+      },
+      "form": {
+        "x": 1510,
+        "y": 80
+      },
+      "consent": {
+        "x": 1790,
+        "y": 80
+      },
+      "pause": {
+        "x": 2070,
+        "y": 80
+      },
+      "offer": {
+        "x": 1510,
+        "y": 430
+      },
+      "done": {
+        "x": 2360,
+        "y": 250
+      },
+      "declined": {
+        "x": 2070,
+        "y": 480
+      }
+    },
+    "collapsedNodeIds": []
+  }
+}

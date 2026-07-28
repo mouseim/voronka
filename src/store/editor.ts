@@ -98,7 +98,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       draft.nodes = draft.nodes.filter((candidate) => candidate.id !== nodeId)
       draft.edges = draft.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId)
       delete draft.editor.nodePositions[nodeId]
-      draft.editor.groups = draft.editor.groups.map((group) => ({ ...group, nodeIds: group.nodeIds.filter((id) => id !== nodeId) }))
+      draft.editor.collapsedNodeIds = draft.editor.collapsedNodeIds.filter((id) => id !== nodeId)
     })
     set({ selectedNodeId: null, selectedNodeIds: [] })
     return true

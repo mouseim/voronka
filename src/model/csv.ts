@@ -17,12 +17,10 @@ export function applicationsCsv(document: FunnelDocument) {
 
 export function mediaCsv(document: FunnelDocument) {
   return toCsv(document.assets.map((asset) => ({
-    assetKey: asset.assetKey,
-    name: asset.displayName,
-    type: asset.expectedType,
+    name: asset.name,
+    type: asset.type,
     required: asset.required ? 'да' : 'нет',
-    mime: asset.expectedMimeTypes.join(', '),
-    filename: asset.recommendedFilename ?? '',
+    reference: asset.logicalRef,
   })))
 }
 

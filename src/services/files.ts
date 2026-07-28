@@ -14,7 +14,6 @@ export async function importFunnelFile(file: File): Promise<ImportResult> {
   const parsed = parseAndMigrateFunnelDocument(raw)
   if (!parsed.success) return parsed
   parsed.issues = validateFunnel(parsed.document)
-  if (parsed.analyticsIsolated) parsed.issues.push({ severity: 'warning', section: 'analytics', code: 'analytics_isolated', message: 'Повреждённая статистика изолирована. Структуру можно открыть и исправить.', path: 'analytics' })
   return parsed
 }
 

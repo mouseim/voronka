@@ -1,54 +1,56 @@
 import { expect, test } from '@playwright/test'
 import path from 'node:path'
 
-test('полное демо открывает схему, разделы, симулятор и статистику', async ({ page }, testInfo) => {
+test('упрощённое демо открывает схему, тесты, предпросмотр и источники', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'Основной desktop-сценарий')
   await page.goto('/')
   await page.getByRole('button', { name: /Открыть полное демо/ }).click()
   await expect(page.getByLabel('Название воронки')).toHaveValue('7 внутренних механизмов')
-  await expect(page.locator('.funnel-node')).toHaveCount(19)
+  await expect(page.locator('.funnel-node')).toHaveCount(12)
 
-  await page.getByRole('button', { name: 'Разделы проекта' }).click()
-  await expect(page.getByRole('heading', { name: 'Переменные' })).toBeVisible()
-  await page.getByRole('button', { name: /Тесты и результаты/ }).click()
-  await expect(page.getByRole('heading', { name: 'Тесты и результаты' })).toBeVisible()
+  await page.getByRole('button', { name: 'Тесты' }).click()
+  await expect(page.getByRole('heading', { name: 'Психологические тесты' })).toBeVisible()
   await expect(page.getByText('7 внутренних механизмов', { exact: true }).first()).toBeVisible()
-
-  await page.getByRole('button', { name: /Схема/ }).click()
-  await page.getByRole('button', { name: 'Предпросмотр' }).click()
-  await expect(page.getByRole('dialog', { name: 'Симулятор воронки' })).toBeVisible()
-  await page.getByRole('button', { name: /Начать симуляцию/ }).click()
-  await page.getByRole('button', { name: 'Начать диагностику' }).click()
-  await page.getByRole('button', { name: 'Социальные сети' }).click()
-  await expect(page.getByText('7 внутренних механизмов', { exact: true }).last()).toBeVisible()
-  await page.getByRole('button', { name: 'Закрыть' }).click()
-
-  await page.getByRole('button', { name: 'Статистика', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Как работает воронка' })).toBeVisible()
   await page.getByRole('button', { name: 'Результаты' }).click()
-  await expect(page.getByRole('heading', { name: 'Распределение результатов' })).toBeVisible()
-  await page.getByRole('button', { name: 'Контакты и заявки' }).click()
-  await expect(page.getByText('Анна К.')).toBeVisible()
+  await expect(page.getByText('Как выбирается результат')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Схема' }).click()
+  await page.getByRole('button', { name: 'Предпросмотр' }).click()
+  await expect(page.getByRole('dialog', { name: 'Предпросмотр воронки' })).toBeVisible()
+  await page.getByRole('button', { name: 'Начать', exact: true }).click()
+  await expect(page.getByText(/Здравствуйте! Пройдите короткую диагностику/)).toBeVisible()
+  await page.getByRole('button', { name: 'Пройти тест' }).click()
+  await page.getByRole('button', { name: 'Продолжить', exact: true }).click()
+  await expect(page.getByText('Что вам важнее всего в сложной ситуации?')).toBeVisible()
+  await page.getByLabel('Закрыть').click()
+
+  await page.getByRole('button', { name: 'Статистика' }).click()
+  await expect(page.getByRole('heading', { name: 'Как работает воронка' })).toBeVisible()
+  await page.getByRole('button', { name: 'Источники' }).click()
+  await expect(page.getByText('Instagram — Reels про тест')).toBeVisible()
+  await expect(page.getByText('840', { exact: true })).toBeVisible()
 })
 
-test('старый fixture мигрирует в schema 1.0.0', async ({ page }, testInfo) => {
+test('старый расширенный fixture отклоняется понятным сообщением', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'Импорт проверяется один раз')
   await page.goto('/')
-  await page.locator('input[type="file"]').setInputFiles(path.resolve('public/fixtures/demo-diagnostika-v0.1.funnel'))
-  await expect(page.getByRole('heading', { name: 'Старая версия обновлена' })).toBeVisible()
-  await expect(page.getByText('0.1.0 → 1.0.0')).toBeVisible()
-  await page.getByRole('button', { name: 'Открыть проект' }).click()
-  await expect(page.getByLabel('Название воронки')).toHaveValue('Диагностика продукта')
+  await page.locator('input[type="file"]').setInputFiles(path.resolve('public/demo-7-mehanizmov-v1.funnel'))
+  await expect(page.getByRole('heading', { name: 'Не удалось открыть файл' })).toBeVisible()
+  await expect(page.getByText(/старой расширенной версии конструктора/)).toBeVisible()
 })
 
-test('мобильный интерфейс сохраняет доступ к схеме и библиотеке', async ({ page }, testInfo) => {
+test('мобильный интерфейс даёт доступ к блокам, настройкам сообщения и тестам', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile', 'Мобильная проверка')
   await page.goto('/')
   await page.getByRole('button', { name: /Открыть полное демо/ }).click()
   await expect(page.locator('.funnel-node').first()).toBeVisible()
   await page.getByRole('button', { name: 'Блоки' }).click()
   const drawer = page.locator('.mobile-drawer')
-  await expect(drawer.getByPlaceholder('Найти блок')).toBeVisible()
-  await drawer.getByPlaceholder('Найти блок').fill('условие')
-  await expect(drawer.getByRole('button', { name: /Условие/ })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: /Сообщение/ })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: /Условие/ })).toHaveCount(0)
+  await page.locator('.mobile-drawer-backdrop').click({ position: { x: 390, y: 20 } })
+
+  await page.getByRole('button', { name: 'Тесты' }).click()
+  await expect(page.getByRole('heading', { name: 'Психологические тесты' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Вопросы' })).toBeVisible()
 })

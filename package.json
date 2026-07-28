@@ -1,7 +1,7 @@
 {
   "name": "voronka-funnel-builder",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "generate:demo": "node scripts/generate-demo.mjs"
   },
   "dependencies": {
     "@xyflow/react": "^12.8.5",

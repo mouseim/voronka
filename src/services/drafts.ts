@@ -76,7 +76,7 @@ export async function getDrafts(): Promise<DraftSummary[]> {
     const draft = toDraft(parsed.document)
     drafts.push(draft)
     const oldId = (raw as { id?: string }).id
-    if (oldId !== draft.id || parsed.migration) {
+    if (oldId !== draft.id) {
       await saveDraft(parsed.document)
       if (oldId && oldId !== draft.id) await requestFromStore(DRAFTS_STORE, 'readwrite', (store) => store.delete(oldId))
     }
