@@ -1,0 +1,192 @@
+import type { FunnelDocument, MediaType, VariableValue } from '../core/shared'
+
+export type SessionStatus = 'active' | 'waiting' | 'completed' | 'abandoned' | 'stopped' | 'failed'
+export type PaymentProviderName = 'unconfigured' | 'mock' | 'telegram_stars' | 'yookassa'
+export type ProductType = 'digital' | 'service' | 'physical' | 'other'
+
+export interface TelegramProfile {
+  telegramId: string
+  username?: string
+  firstName?: string
+  lastName?: string
+  languageCode?: string
+}
+
+export interface RuntimeUser {
+  id: string
+  telegramId: string
+  username?: string
+  firstName?: string
+  optedOutAt?: string | null
+  backgroundBlocked: boolean
+}
+
+export interface FunnelVersionRecord {
+  id: string
+  funnelId: string
+  document: FunnelDocument
+  status: 'draft' | 'published' | 'archived'
+  allowPlaceholders: boolean
+  contentHash: string
+}
+
+export interface TestRunState {
+  testId: string
+  nodeId: string
+  questionOrder: string[]
+  answerOrder: Record<string, string[]>
+  index: number
+  answers: Record<string, string | string[] | number>
+  selected: string[]
+}
+
+export interface FormRunState {
+  nodeId: string
+  index: number
+  values: Record<string, string>
+}
+
+export interface SessionState {
+  awaiting?: 'callback' | 'text' | 'timer' | 'payment'
+  testRun?: TestRunState
+  formRun?: FormRunState
+  pendingFormSubmission?: { values: Record<string, string> }
+  lastResultId?: string
+  lastResultName?: string
+  lastTestId?: string
+  lastNodeEntered?: string
+  remindersSent?: number
+  missingMediaNotified?: string[]
+  variables?: Record<string, VariableValue>
+}
+
+export interface RuntimeSession {
+  id: string
+  userId: string
+  funnelId: string
+  versionId: string
+  status: SessionStatus
+  currentNodeId: string | null
+  sourceTrackingId?: string
+  sourceCode?: string
+  state: SessionState
+  revision: number
+  startedAt: string
+  lastActivityAt: string
+}
+
+export type CallbackAction =
+  | { type: 'advance'; nodeId: string; handle: string }
+  | { type: 'test_single'; nodeId: string; testId: string; questionId: string; answerId: string }
+  | { type: 'test_toggle'; nodeId: string; testId: string; questionId: string; answerId: string }
+  | { type: 'test_submit'; nodeId: string; testId: string; questionId: string }
+  | { type: 'test_value'; nodeId: string; testId: string; questionId: string; value: number }
+  | { type: 'test_skip'; nodeId: string; testId: string; questionId: string }
+  | { type: 'consent'; nodeId: string; accepted: boolean }
+  | { type: 'form_cancel'; nodeId: string }
+  | { type: 'product_buy'; nodeId: string; productId: string }
+  | { type: 'product_skip'; nodeId: string }
+  | { type: 'mock_payment'; paymentId: string }
+  | { type: 'restart'; funnelId: string }
+
+export interface CallbackRecord {
+  token: string
+  userId: string
+  sessionId?: string
+  action: CallbackAction
+  expiresAt: string
+  consumedAt?: string
+}
+
+export interface RedirectRecord {
+  token: string
+  userId: string
+  sessionId: string
+  targetUrl: string
+  continueAfterClick: boolean
+  expiresAt?: string
+}
+
+export interface ProductRuntimeConfig {
+  productId: string
+  productType: ProductType
+  provider: PaymentProviderName
+  currency: string
+  amountMinor: number
+  deliveryAssetIds: string[]
+  deliveryByResult: Record<string, string[]>
+  repeatPolicy: 'deny' | 'redeliver' | 'repurchase'
+  afterPurchaseText: string
+}
+
+export interface MediaBinding {
+  assetId: string
+  assetKey: string
+  expectedType: MediaType
+  telegramFileId?: string
+  telegramFileUniqueId?: string
+  mimeType?: string
+  fileSize?: number
+}
+
+export interface PaymentRecord {
+  id: string
+  idempotencyKey: string
+  userId: string
+  sessionId: string
+  versionId: string
+  funnelId: string
+  productId: string
+  provider: PaymentProviderName
+  invoicePayload: string
+  amountMinor: number
+  currency: string
+  status: 'created' | 'pending' | 'paid' | 'failed' | 'refunded'
+}
+
+export interface AnalyticsEvent {
+  idempotencyKey: string
+  type: string
+  userId?: string
+  sessionId?: string
+  funnelId?: string
+  versionId?: string
+  nodeId?: string
+  trackingId?: string
+  payload?: Record<string, unknown>
+  occurredAt?: string
+}
+
+export interface DurableJob {
+  id: string
+  uniqueKey: string
+  type: 'timer_continue' | 'reminder' | 'redirect_continue' | 'resume_session'
+  payload: Record<string, unknown>
+  dueAt: string
+  attempts: number
+  maxAttempts: number
+}
+
+export interface OutgoingButton {
+  text: string
+  callbackToken?: string
+  url?: string
+}
+
+export interface InvoiceSpec {
+  title: string
+  description: string
+  payload: string
+  provider: PaymentProviderName
+  providerToken?: string
+  currency: string
+  amountMinor: number
+}
+
+export interface RuntimeTransport {
+  sendText(telegramId: string, text: string, buttons?: OutgoingButton[][]): Promise<void>
+  sendMedia(telegramId: string, type: MediaType, fileId: string, caption?: string): Promise<void>
+  sendInvoice(telegramId: string, invoice: InvoiceSpec): Promise<void>
+  sendDocument(telegramId: string, filename: string, content: Buffer, caption?: string): Promise<void>
+  notifyAdministrators(text: string): Promise<void>
+}

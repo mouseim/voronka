@@ -1,10 +1,30 @@
 node_modules
 dist
 .DS_Store
-*.local
 coverage
 test-results
 playwright-report
 *.tsbuildinfo
 vite.config.js
 vite.config.d.ts
+
+# Local environment and secrets. Keep safe templates versioned.
+.env
+.env.*
+!.env.example
+
+# Runtime and database artifacts.
+*.log
+logs/
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.pid
+tmp/
+.temp/
+.cache/
+
+# Local editor settings.
+.idea/
+.vscode/

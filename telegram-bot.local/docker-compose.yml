@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-voronka}
+      POSTGRES_USER: ${POSTGRES_USER:-voronka}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-voronka}
+    ports:
+      - "5432:5432"
+    volumes:
+      - voronka_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U voronka -d voronka"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  bot:
+    build:
+      context: ..
+      dockerfile: telegram-bot.local/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["npm", "start"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  voronka_postgres:
