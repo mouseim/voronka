@@ -1,0 +1,62 @@
+export interface VkLongPollServer {
+  key: string
+  server: string
+  ts: string
+}
+
+export interface VkApi {
+  sendMessage(peerId: string, message: string, keyboard?: string): Promise<number>
+  getLongPollServer(): Promise<VkLongPollServer>
+  answerMessageEvent(eventId: string, userId: string, peerId: string): Promise<void>
+}
+
+export class VkApiClient implements VkApi {
+  constructor(
+    private readonly token: string,
+    private readonly groupId: string,
+    private readonly version = '5.199',
+    private readonly fetcher: typeof fetch = fetch,
+    private readonly randomId: () => number = vkRandomId,
+  ) {}
+
+  async sendMessage(peerId: string, message: string, keyboard?: string) {
+    return this.request<number>('messages.send', {
+      peer_id: peerId,
+      random_id: this.randomId(),
+      message,
+      ...(keyboard ? { keyboard } : {}),
+    })
+  }
+
+  async getLongPollServer() {
+    return this.request<VkLongPollServer>('groups.getLongPollServer', { group_id: this.groupId })
+  }
+
+  async answerMessageEvent(eventId: string, userId: string, peerId: string) {
+    await this.request<number>('messages.sendMessageEventAnswer', {
+      event_id: eventId,
+      user_id: userId,
+      peer_id: peerId,
+      event_data: '{}',
+    })
+  }
+
+  private async request<T>(method: string, parameters: Record<string, string | number>) {
+    const body = new URLSearchParams({ access_token: this.token, v: this.version })
+    Object.entries(parameters).forEach(([key, value]) => body.set(key, String(value)))
+    const response = await this.fetcher(`https://api.vk.com/method/${method}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body,
+    })
+    if (!response.ok) throw new Error(`VK_HTTP_ERROR:${response.status}`)
+    const payload = await response.json() as { response?: T; error?: { error_code: number; error_msg: string } }
+    if (payload.error) throw new Error(`VK_API_ERROR:${payload.error.error_code}:${payload.error.error_msg}`)
+    if (payload.response === undefined) throw new Error(`VK_API_INVALID_RESPONSE:${method}`)
+    return payload.response
+  }
+}
+
+function vkRandomId() {
+  return Math.floor(Math.random() * 4_294_967_295) - 2_147_483_648
+}

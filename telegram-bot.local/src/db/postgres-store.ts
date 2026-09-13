@@ -13,7 +13,8 @@ import type {
   RedirectRecord,
   RuntimeSession,
   RuntimeUser,
-  TelegramProfile,
+  Platform,
+  PlatformProfile,
 } from '../domain/types'
 import type { RuntimeStore } from '../runtime/store'
 import type { DatabasePool } from './pool'
@@ -21,23 +22,23 @@ import type { DatabasePool } from './pool'
 export class PostgresRuntimeStore implements RuntimeStore {
   constructor(readonly pool: DatabasePool) {}
 
-  async reserveUpdate(updateId: number) {
-    const result = await this.pool.query('INSERT INTO processed_updates(update_id) VALUES ($1) ON CONFLICT DO NOTHING', [updateId])
+  async reserveUpdate(platform: Platform, updateId: string) {
+    const result = await this.pool.query('INSERT INTO processed_updates(platform, external_update_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [platform, updateId])
     return Boolean(result.rowCount)
   }
 
-  async upsertUser(profile: TelegramProfile) {
+  async upsertUser(profile: PlatformProfile) {
     const result = await this.pool.query<UserRow>(`
-      INSERT INTO telegram_users(telegram_id, username, first_name, last_name, language_code)
-      VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT (telegram_id) DO UPDATE SET
+      INSERT INTO telegram_users(platform, external_user_id, telegram_id, username, first_name, last_name, language_code)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      ON CONFLICT (platform, external_user_id) DO UPDATE SET
         username = EXCLUDED.username,
         first_name = EXCLUDED.first_name,
         last_name = EXCLUDED.last_name,
         language_code = EXCLUDED.language_code,
         last_seen_at = now()
       RETURNING *
-    `, [profile.telegramId, profile.username ?? null, profile.firstName ?? null, profile.lastName ?? null, profile.languageCode ?? null])
+    `, [profile.platform, profile.externalUserId, profile.platform === 'telegram' ? profile.externalUserId : null, profile.username ?? null, profile.firstName ?? null, profile.lastName ?? null, profile.languageCode ?? null])
     return mapUser(result.rows[0]!)
   }
 
@@ -46,8 +47,8 @@ export class PostgresRuntimeStore implements RuntimeStore {
     return result.rows[0] ? mapUser(result.rows[0]) : null
   }
 
-  async getUserByTelegramId(telegramId: string) {
-    const result = await this.pool.query<UserRow>('SELECT * FROM telegram_users WHERE telegram_id = $1', [telegramId])
+  async getUserByPlatformIdentity(platform: Platform, externalUserId: string) {
+    const result = await this.pool.query<UserRow>('SELECT * FROM telegram_users WHERE platform = $1 AND external_user_id = $2', [platform, externalUserId])
     return result.rows[0] ? mapUser(result.rows[0]) : null
   }
 
@@ -446,7 +447,9 @@ export class PostgresRuntimeStore implements RuntimeStore {
 
 interface UserRow extends QueryResultRow {
   id: string
-  telegram_id: string
+  platform: Platform
+  external_user_id: string
+  telegram_id: string | null
   username: string | null
   first_name: string | null
   opted_out_at: Date | string | null
@@ -545,7 +548,8 @@ interface PaymentRow extends QueryResultRow {
 function mapUser(row: UserRow): RuntimeUser {
   return {
     id: row.id,
-    telegramId: String(row.telegram_id),
+    platform: row.platform,
+    externalUserId: row.external_user_id,
     username: row.username ?? undefined,
     firstName: row.first_name ?? undefined,
     optedOutAt: row.opted_out_at ? new Date(row.opted_out_at).toISOString() : null,

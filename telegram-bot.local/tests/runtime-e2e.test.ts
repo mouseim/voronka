@@ -113,8 +113,8 @@ describe('E2E runtime с фальшивым Telegram transport', () => {
     const token = await store.createCallback(user.id, session.id, { type: 'advance', nodeId: 'welcome', handle: 'button_details' })
     expect(await store.consumeCallback(token, user.id)).not.toBeNull()
     expect(await store.consumeCallback(token, user.id)).toBeNull()
-    expect(await store.reserveUpdate(77)).toBe(true)
-    expect(await store.reserveUpdate(77)).toBe(false)
+    expect(await store.reserveUpdate('telegram', '77')).toBe(true)
+    expect(await store.reserveUpdate('telegram', '77')).toBe(false)
 
     const payment = await store.createPayment({
       idempotencyKey: 'one',
@@ -177,7 +177,7 @@ describe('E2E runtime с фальшивым Telegram transport', () => {
     const v1 = store.install(first, { default: true })
     const transport = new FakeTransport()
     const engine = new FunnelEngine(store, transport)
-    await engine.start({ ...profile, telegramId: 'old-user' })
+    await engine.start({ ...profile, externalUserId: 'old-user' })
 
     const second = structuredClone(first)
     second.funnel.version = 2
@@ -198,13 +198,13 @@ describe('E2E runtime с фальшивым Telegram transport', () => {
     }]
     const otherVersion = store.install(other, { default: false })
 
-    await engine.start({ ...profile, telegramId: 'old-user' })
-    await engine.start({ ...profile, telegramId: 'new-user' })
-    await engine.start({ ...profile, telegramId: 'tracked-user' }, 'other-code')
+    await engine.start({ ...profile, externalUserId: 'old-user' })
+    await engine.start({ ...profile, externalUserId: 'new-user' })
+    await engine.start({ ...profile, externalUserId: 'tracked-user' }, 'other-code')
 
-    const old = await store.getUserByTelegramId('old-user')
-    const fresh = await store.getUserByTelegramId('new-user')
-    const tracked = await store.getUserByTelegramId('tracked-user')
+    const old = await store.getUserByPlatformIdentity('telegram', 'old-user')
+    const fresh = await store.getUserByPlatformIdentity('telegram', 'new-user')
+    const tracked = await store.getUserByPlatformIdentity('telegram', 'tracked-user')
     expect((await store.findActiveSession(old!.id, v1.funnelId))?.versionId).toBe(v1.id)
     expect((await store.findActiveSession(fresh!.id, v2.funnelId))?.versionId).toBe(v2.id)
     const trackedSession = await store.findActiveSession(tracked!.id, otherVersion.funnelId)
@@ -258,7 +258,7 @@ describe('E2E runtime с фальшивым Telegram transport', () => {
     await engine.stop(profile)
     expect([...store.sessions.values()].every((session) => session.status === 'stopped')).toBe(true)
     expect([...store.jobs.values()].filter((job) => job.status === 'pending')).toHaveLength(0)
-    expect((await store.getUserByTelegramId(profile.telegramId))?.backgroundBlocked).toBe(true)
+    expect((await store.getUserByPlatformIdentity('telegram', profile.externalUserId))?.backgroundBlocked).toBe(true)
   })
 
   it('resume job восстанавливает отправку после временной ошибки Telegram', async () => {

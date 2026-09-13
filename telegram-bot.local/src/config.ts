@@ -10,6 +10,9 @@ const environmentSchema = z.object({
   PUBLIC_BASE_URL: z.string().url().optional().or(z.literal('')),
   TELEGRAM_WEBHOOK_SECRET: z.string().min(16).optional().or(z.literal('')),
   TELEGRAM_PAYMENT_PROVIDER_TOKEN: z.string().optional().default(''),
+  VK_GROUP_ID: z.string().optional().default(''),
+  VK_GROUP_TOKEN: z.string().optional().default(''),
+  VK_API_VERSION: z.string().default('5.199'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   PORT: z.coerce.number().int().positive().default(8080),
   HOST: z.string().default('0.0.0.0'),
@@ -36,6 +39,12 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
   if (raw.BOT_MODE === 'webhook' && (!raw.PUBLIC_BASE_URL || !raw.TELEGRAM_WEBHOOK_SECRET)) {
     throw new Error('Для BOT_MODE=webhook нужны PUBLIC_BASE_URL и TELEGRAM_WEBHOOK_SECRET.')
   }
+  if (Boolean(raw.VK_GROUP_ID) !== Boolean(raw.VK_GROUP_TOKEN)) {
+    throw new Error('VK_GROUP_ID и VK_GROUP_TOKEN должны быть заданы вместе.')
+  }
+  if (raw.VK_GROUP_ID && !/^[1-9]\d*$/.test(raw.VK_GROUP_ID)) {
+    throw new Error('VK_GROUP_ID должен быть положительным числом.')
+  }
   return {
     telegramToken: raw.TELEGRAM_BOT_TOKEN,
     adminIds: new Set(adminIds),
@@ -45,6 +54,11 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     publicBaseUrl: raw.PUBLIC_BASE_URL ? raw.PUBLIC_BASE_URL.replace(/\/+$/, '') : null,
     webhookSecret: raw.TELEGRAM_WEBHOOK_SECRET || null,
     paymentProviderToken: raw.TELEGRAM_PAYMENT_PROVIDER_TOKEN,
+    vk: raw.VK_GROUP_ID ? {
+      groupId: raw.VK_GROUP_ID,
+      token: raw.VK_GROUP_TOKEN,
+      apiVersion: raw.VK_API_VERSION,
+    } : null,
     logLevel: raw.LOG_LEVEL,
     port: raw.PORT,
     host: raw.HOST,

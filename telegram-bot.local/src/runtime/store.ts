@@ -10,14 +10,15 @@ import type {
   RedirectRecord,
   RuntimeSession,
   RuntimeUser,
-  TelegramProfile,
+  Platform,
+  PlatformProfile,
 } from '../domain/types'
 
 export interface RuntimeStore {
-  reserveUpdate(updateId: number): Promise<boolean>
-  upsertUser(profile: TelegramProfile): Promise<RuntimeUser>
+  reserveUpdate(platform: Platform, updateId: string): Promise<boolean>
+  upsertUser(profile: PlatformProfile): Promise<RuntimeUser>
   getUser(userId: string): Promise<RuntimeUser | null>
-  getUserByTelegramId(telegramId: string): Promise<RuntimeUser | null>
+  getUserByPlatformIdentity(platform: Platform, externalUserId: string): Promise<RuntimeUser | null>
   setOptOut(userId: string, optedOut: boolean, blockBackground: boolean): Promise<void>
   stopUserSessions(userId: string): Promise<string[]>
   resolveVersion(trackingCode?: string): Promise<{ version: FunnelVersionRecord; trackingId?: string } | null>

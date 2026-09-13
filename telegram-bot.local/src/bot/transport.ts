@@ -1,6 +1,7 @@
 import { InlineKeyboard, InputFile, type Bot } from 'grammy'
 import type { MediaType } from '../core/shared'
 import type { InvoiceSpec, OutgoingButton, RuntimeTransport } from '../domain/types'
+import { telegramCapabilities } from '../runtime/capabilities'
 
 interface TelegramTransportOptions {
   administratorIds: Iterable<string>
@@ -8,6 +9,8 @@ interface TelegramTransportOptions {
 }
 
 export class GrammyTransport implements RuntimeTransport {
+  readonly platform = 'telegram' as const
+  readonly capabilities = telegramCapabilities
   private readonly notificationChats: string[]
 
   constructor(private readonly bot: Bot, options: TelegramTransportOptions) {

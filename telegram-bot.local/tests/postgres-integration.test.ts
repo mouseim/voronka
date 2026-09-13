@@ -10,6 +10,26 @@ import { PostgresRuntimeStore } from '../src/db/postgres-store'
 import { loadDemo, profile } from './helpers'
 
 describe('PostgreSQL import/publish/version integration', () => {
+  it('хранит одинаковые external ID Telegram и VK как разные identities', async () => {
+    const database = await PGlite.create({ extensions: { pgcrypto } })
+    const pool = pglitePool(database)
+    try {
+      await applyMigration(database, '001_initial.sql')
+      await applyMigration(database, '002_submission_idempotency.sql')
+      await database.query("INSERT INTO telegram_users(telegram_id, username) VALUES (42, 'legacy')")
+      await applyMigration(database, '003_platform_identity.sql')
+      const store = new PostgresRuntimeStore(pool)
+      expect(await store.getUserByPlatformIdentity('telegram', '42')).toMatchObject({ platform: 'telegram', username: 'legacy' })
+      const telegram = await store.upsertUser({ platform: 'telegram', externalUserId: '42', username: 'legacy' })
+      const vk = await store.upsertUser({ platform: 'vk', externalUserId: '42' })
+      expect(telegram.id).not.toBe(vk.id)
+      expect(await store.getUserByPlatformIdentity('telegram', '42')).toMatchObject({ platform: 'telegram' })
+      expect(await store.getUserByPlatformIdentity('vk', '42')).toMatchObject({ platform: 'vk' })
+    } finally {
+      await database.close()
+    }
+  })
+
   it('публикует версии, копирует стабильные media bindings и не мигрирует старую сессию', async () => {
     const database = await PGlite.create({ extensions: { pgcrypto } })
     const pool = pglitePool(database)
@@ -89,6 +109,10 @@ async function applyMigrations(database: PGlite) {
   const directory = path.resolve(process.cwd(), 'migrations')
   const files = (await readdir(directory)).filter((file) => file.endsWith('.sql')).sort()
   for (const file of files) await database.exec(await readFile(path.join(directory, file), 'utf8'))
+}
+
+async function applyMigration(database: PGlite, filename: string) {
+  await database.exec(await readFile(path.resolve(process.cwd(), 'migrations', filename), 'utf8'))
 }
 
 function pglitePool(database: PGlite): DatabasePool {

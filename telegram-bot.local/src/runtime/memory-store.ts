@@ -12,7 +12,8 @@ import type {
   RedirectRecord,
   RuntimeSession,
   RuntimeUser,
-  TelegramProfile,
+  Platform,
+  PlatformProfile,
 } from '../domain/types'
 import type { RuntimeStore } from './store'
 
@@ -34,7 +35,7 @@ export class MemoryRuntimeStore implements RuntimeStore {
   readonly purchases = new Map<string, { id: string; paymentId: string }>()
   readonly deliveries = new Set<string>()
   private readonly deliveredAssets = new Set<string>()
-  readonly processedUpdates = new Set<number>()
+  readonly processedUpdates = new Set<string>()
   private defaultVersionId: string | null = null
   private activeVersionByFunnel = new Map<string, string>()
   private tracking = new Map<string, { versionId: string; trackingId: string }>()
@@ -61,14 +62,15 @@ export class MemoryRuntimeStore implements RuntimeStore {
     this.media.set(`${versionId}:${binding.assetId}`, structuredClone(binding))
   }
 
-  async reserveUpdate(updateId: number) {
-    if (this.processedUpdates.has(updateId)) return false
-    this.processedUpdates.add(updateId)
+  async reserveUpdate(platform: Platform, updateId: string) {
+    const key = `${platform}:${updateId}`
+    if (this.processedUpdates.has(key)) return false
+    this.processedUpdates.add(key)
     return true
   }
 
-  async upsertUser(profile: TelegramProfile) {
-    const existing = [...this.users.values()].find((user) => user.telegramId === profile.telegramId)
+  async upsertUser(profile: PlatformProfile) {
+    const existing = [...this.users.values()].find((user) => user.platform === profile.platform && user.externalUserId === profile.externalUserId)
     if (existing) {
       existing.username = profile.username
       existing.firstName = profile.firstName
@@ -76,7 +78,8 @@ export class MemoryRuntimeStore implements RuntimeStore {
     }
     const user: RuntimeUser = {
       id: randomUUID(),
-      telegramId: profile.telegramId,
+      platform: profile.platform,
+      externalUserId: profile.externalUserId,
       username: profile.username,
       firstName: profile.firstName,
       optedOutAt: null,
@@ -86,8 +89,8 @@ export class MemoryRuntimeStore implements RuntimeStore {
     return structuredClone(user)
   }
 
-  async getUserByTelegramId(telegramId: string) {
-    const found = [...this.users.values()].find((user) => user.telegramId === telegramId)
+  async getUserByPlatformIdentity(platform: Platform, externalUserId: string) {
+    const found = [...this.users.values()].find((user) => user.platform === platform && user.externalUserId === externalUserId)
     return found ? structuredClone(found) : null
   }
 

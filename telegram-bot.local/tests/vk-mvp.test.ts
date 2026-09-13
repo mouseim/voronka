@@ -1,0 +1,216 @@
+import { describe, expect, it } from 'vitest'
+import type { FunnelDocument } from '../src/core/shared'
+import { loadConfig } from '../src/config'
+import type { PlatformProfile } from '../src/domain/types'
+import { FunnelEngine } from '../src/runtime/engine'
+import { MemoryRuntimeStore } from '../src/runtime/memory-store'
+import { VkApiClient, type VkApi, type VkLongPollServer } from '../src/vk/api'
+import { VkTransport } from '../src/vk/transport'
+import { VkUpdateAdapter, type VkLongPollUpdate } from '../src/vk/updates'
+import { loadDemo } from './helpers'
+
+describe('VK MVP', () => {
+  it('разделяет одинаковые external ID Telegram и VK', async () => {
+    const store = new MemoryRuntimeStore()
+    const telegram: PlatformProfile = { platform: 'telegram', externalUserId: '42' }
+    const vk: PlatformProfile = { platform: 'vk', externalUserId: '42' }
+
+    const telegramUser = await store.upsertUser(telegram)
+    const vkUser = await store.upsertUser(vk)
+
+    expect(telegramUser.id).not.toBe(vkUser.id)
+    expect(store.users).toHaveLength(2)
+    expect(await store.getUserByPlatformIdentity('telegram', '42')).toMatchObject({ platform: 'telegram' })
+    expect(await store.getUserByPlatformIdentity('vk', '42')).toMatchObject({ platform: 'vk' })
+  })
+
+  it('запускает default funnel, отправляет VK keyboard и исполняет branch payload', async () => {
+    const document = await branchDocument()
+    const runtime = vkRuntime(document)
+
+    await runtime.adapter.handle(messageUpdate(101, 'Привет', 1))
+
+    expect(runtime.api.messages).toHaveLength(1)
+    expect(runtime.api.messages[0]).toMatchObject({ peerId: '101', message: 'Выберите путь' })
+    const keyboard = JSON.parse(runtime.api.messages[0]!.keyboard!) as {
+      inline: boolean
+      buttons: Array<Array<{ action: { type: string; label: string; payload: string } }>>
+    }
+    expect(keyboard.inline).toBe(true)
+    expect(keyboard.buttons[0]![0]!.action).toMatchObject({ type: 'callback', label: 'Продолжить' })
+    const payload = JSON.parse(keyboard.buttons[0]![0]!.action.payload) as { callbackToken: string }
+
+    await runtime.adapter.handle(buttonUpdate(101, payload, 'event-1'))
+
+    expect(runtime.api.answers).toEqual([{ eventId: 'event-1', userId: '101', peerId: '101' }])
+    expect(runtime.api.messages.at(-1)?.message).toBe('Готово')
+    expect([...runtime.store.sessions.values()][0]?.status).toBe('completed')
+  })
+
+  it('преобразует URL button в официальный VK open_link action', async () => {
+    const api = new FakeVkApi()
+    const transport = new VkTransport(api)
+
+    await transport.sendText('101', 'Ссылка', [[{ text: 'Открыть', url: 'https://example.com' }]])
+
+    const keyboard = JSON.parse(api.messages[0]!.keyboard!) as { buttons: Array<Array<{ action: Record<string, string> }>> }
+    expect(keyboard.buttons[0]![0]!.action).toEqual({ type: 'open_link', link: 'https://example.com', label: 'Открыть' })
+  })
+
+  it('исполняет variables и conditions тем же FunnelEngine', async () => {
+    const document = await variableDocument()
+    const runtime = vkRuntime(document)
+
+    await runtime.adapter.handle(messageUpdate(202, 'Начать', 1))
+
+    expect(runtime.api.messages.at(-1)?.message).toBe('Баллы: 2')
+    expect([...runtime.store.sessions.values()][0]?.state.variables).toMatchObject({ score: 2 })
+  })
+
+  it('возобновляет сохранённую session после пересоздания VK adapter', async () => {
+    const document = await branchDocument()
+    const runtime = vkRuntime(document)
+    await runtime.adapter.handle(messageUpdate(303, 'Привет', 1))
+    const restartedAdapter = new VkUpdateAdapter(runtime.store, runtime.engine, runtime.api)
+
+    await restartedAdapter.handle(messageUpdate(303, 'Начать', 2))
+
+    expect(runtime.store.sessions).toHaveLength(1)
+    expect(runtime.api.messages.filter((message) => message.message === 'Выберите путь')).toHaveLength(2)
+  })
+
+  it('явно отклоняет достижимый VK product как unsupported capability', async () => {
+    const document = await unsupportedProductDocument()
+    const runtime = vkRuntime(document)
+
+    await expect(runtime.engine.start({ platform: 'vk', externalUserId: '404' }))
+      .rejects.toThrow('UNSUPPORTED_PLATFORM_CAPABILITY:vk:payments:product-node')
+    expect(runtime.api.messages.at(-1)?.message).toContain('неподдерживаемую на vk возможность: payments:product-node')
+    expect(runtime.store.sessions).toHaveLength(0)
+  })
+
+  it('не требует VK env для Telegram-only конфигурации', () => {
+    const config = loadConfig({
+      TELEGRAM_BOT_TOKEN: 'telegram-test-token',
+      DATABASE_URL: 'postgresql://user:password@localhost:5432/voronka',
+    })
+    expect(config.vk).toBeNull()
+  })
+
+  it('VkApiClient отправляет messages.send по API 5.199 с random_id и keyboard', async () => {
+    let request: { url: string; body: URLSearchParams } | undefined
+    const fetcher: typeof fetch = async (input, init) => {
+      request = { url: String(input), body: new URLSearchParams(String(init?.body)) }
+      return new Response(JSON.stringify({ response: 77 }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }
+    const client = new VkApiClient('vk-test-token', '123', '5.199', fetcher, () => 456)
+
+    expect(await client.sendMessage('101', 'Текст', '{"inline":true}')).toBe(77)
+    expect(request?.url).toBe('https://api.vk.com/method/messages.send')
+    expect(Object.fromEntries(request!.body)).toMatchObject({
+      access_token: 'vk-test-token',
+      v: '5.199',
+      peer_id: '101',
+      random_id: '456',
+      message: 'Текст',
+      keyboard: '{"inline":true}',
+    })
+  })
+})
+
+class FakeVkApi implements VkApi {
+  readonly messages: Array<{ peerId: string; message: string; keyboard?: string }> = []
+  readonly answers: Array<{ eventId: string; userId: string; peerId: string }> = []
+
+  async sendMessage(peerId: string, message: string, keyboard?: string) {
+    this.messages.push({ peerId, message, keyboard })
+    return this.messages.length
+  }
+
+  async getLongPollServer(): Promise<VkLongPollServer> {
+    return { key: 'key', server: 'https://lp.vk.com', ts: '1' }
+  }
+
+  async answerMessageEvent(eventId: string, userId: string, peerId: string) {
+    this.answers.push({ eventId, userId, peerId })
+  }
+}
+
+function vkRuntime(document: FunnelDocument) {
+  const store = new MemoryRuntimeStore()
+  store.install(document)
+  const api = new FakeVkApi()
+  const engine = new FunnelEngine(store, new VkTransport(api))
+  const adapter = new VkUpdateAdapter(store, engine, api)
+  return { store, api, engine, adapter }
+}
+
+function messageUpdate(userId: number, text: string, id: number): VkLongPollUpdate {
+  return {
+    type: 'message_new',
+    object: { message: { id, conversation_message_id: id, date: 1_800_000_000 + id, from_id: userId, peer_id: userId, text } },
+  }
+}
+
+function buttonUpdate(userId: number, payload: object, eventId: string): VkLongPollUpdate {
+  return { type: 'message_event', object: { user_id: userId, peer_id: userId, event_id: eventId, payload } }
+}
+
+async function branchDocument() {
+  const document = await loadDemo()
+  const start = document.nodes.find((node) => node.type === 'start')!
+  document.nodes = [
+    start,
+    { id: 'choice', type: 'message', data: { title: 'Выбор', text: 'Выберите путь', buttons: [{ id: 'continue', text: 'Продолжить', action: 'branch' }] } },
+    { id: 'end', type: 'end', data: { title: 'Финиш', text: 'Готово' } },
+  ]
+  document.edges = [
+    { id: 'start-choice', source: start.id, target: 'choice', sourceHandle: 'next' },
+    { id: 'choice-end', source: 'choice', target: 'end', sourceHandle: 'continue' },
+  ]
+  document.assets = []
+  document.products = []
+  document.tests = []
+  return document
+}
+
+async function variableDocument() {
+  const document = await loadDemo()
+  const start = document.nodes.find((node) => node.type === 'start')!
+  document.variables = [{ id: 'score', key: 'score', name: 'Баллы', type: 'number', defaultValue: 0 }]
+  document.nodes = [
+    start,
+    { id: 'set', type: 'variable', data: { title: 'Начислить', operations: [{ id: 'add', variableId: 'score', operation: 'add', value: 2 }] } },
+    { id: 'condition', type: 'condition', data: { title: 'Проверить', variableId: 'score', operator: 'greater_or_equal', value: 2 } },
+    { id: 'yes', type: 'message', data: { title: 'Да', text: 'Баллы: {{score}}', buttons: [] } },
+    { id: 'no', type: 'end', data: { title: 'Нет', text: 'Ошибка' } },
+  ]
+  document.edges = [
+    { id: 'start-set', source: start.id, target: 'set', sourceHandle: 'next' },
+    { id: 'set-condition', source: 'set', target: 'condition', sourceHandle: 'next' },
+    { id: 'condition-yes', source: 'condition', target: 'yes', sourceHandle: 'true' },
+    { id: 'condition-no', source: 'condition', target: 'no', sourceHandle: 'false' },
+  ]
+  document.assets = []
+  document.products = []
+  document.tests = []
+  return document
+}
+
+async function unsupportedProductDocument() {
+  const document = await loadDemo()
+  const start = document.nodes.find((node) => node.type === 'start')!
+  const product = document.products[0]!
+  document.nodes = [
+    start,
+    { id: 'product-node', type: 'product', data: { title: 'Продукт', productId: product.id, headline: product.name, description: '', price: product.price, payButtonText: 'Купить', allowSkip: false } },
+    { id: 'end', type: 'end', data: { title: 'Финиш', text: 'Готово' } },
+  ]
+  document.edges = [
+    { id: 'start-product', source: start.id, target: 'product-node', sourceHandle: 'next' },
+    { id: 'product-end', source: 'product-node', target: 'end', sourceHandle: 'paid' },
+  ]
+  document.assets = []
+  document.tests = []
+  return document
+}

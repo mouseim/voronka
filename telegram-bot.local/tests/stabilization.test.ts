@@ -18,7 +18,7 @@ describe('стабилизация настроек Telegram runtime', () => {
     expect(await engine.handleOptOutCommand(profile, '/LEAVE@funnel_bot')).toBe(true)
 
     expect([...store.sessions.values()][0]?.status).toBe('stopped')
-    expect((await store.getUserByTelegramId(profile.telegramId))?.backgroundBlocked).toBe(true)
+    expect((await store.getUserByPlatformIdentity('telegram', profile.externalUserId))?.backgroundBlocked).toBe(true)
     expect(transport.texts.at(-1)?.text).toBe('Рассылка остановлена.')
   })
 

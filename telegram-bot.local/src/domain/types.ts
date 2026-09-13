@@ -4,17 +4,24 @@ export type SessionStatus = 'active' | 'waiting' | 'completed' | 'abandoned' | '
 export type PaymentProviderName = 'unconfigured' | 'mock' | 'telegram_stars' | 'yookassa'
 export type ProductType = 'digital' | 'service' | 'physical' | 'other'
 
-export interface TelegramProfile {
-  telegramId: string
+export type Platform = 'telegram' | 'vk'
+
+export interface PlatformProfile {
+  platform: Platform
+  externalUserId: string
   username?: string
   firstName?: string
   lastName?: string
   languageCode?: string
 }
 
+export type TelegramProfile = PlatformProfile & { platform: 'telegram' }
+export type VkProfile = PlatformProfile & { platform: 'vk' }
+
 export interface RuntimeUser {
   id: string
-  telegramId: string
+  platform: Platform
+  externalUserId: string
   username?: string
   firstName?: string
   optedOutAt?: string | null
@@ -47,6 +54,7 @@ export interface FormRunState {
 }
 
 export interface SessionState {
+  platform?: Platform
   awaiting?: 'callback' | 'text' | 'timer' | 'payment'
   testRun?: TestRunState
   formRun?: FormRunState
@@ -184,9 +192,19 @@ export interface InvoiceSpec {
 }
 
 export interface RuntimeTransport {
-  sendText(telegramId: string, text: string, buttons?: OutgoingButton[][]): Promise<void>
-  sendMedia(telegramId: string, type: MediaType, fileId: string, caption?: string): Promise<void>
-  sendInvoice(telegramId: string, invoice: InvoiceSpec): Promise<void>
-  sendDocument(telegramId: string, filename: string, content: Buffer, caption?: string): Promise<void>
+  readonly platform: Platform
+  readonly capabilities: PlatformCapabilities
+  sendText(recipientId: string, text: string, buttons?: OutgoingButton[][]): Promise<void>
+  sendMedia(recipientId: string, type: MediaType, fileId: string, caption?: string): Promise<void>
+  sendInvoice(recipientId: string, invoice: InvoiceSpec): Promise<void>
+  sendDocument(recipientId: string, filename: string, content: Buffer, caption?: string): Promise<void>
   notifyAdministrators(text: string): Promise<void>
+}
+
+export interface PlatformCapabilities {
+  text: boolean
+  buttons: boolean
+  urlButtons: boolean
+  media: boolean
+  payments: boolean
 }

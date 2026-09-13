@@ -12,12 +12,16 @@ import { createHttpServer } from './http/server'
 import { createJobWorker } from './jobs/worker'
 import { createMaintenanceWorker } from './jobs/maintenance'
 import { FunnelEngine } from './runtime/engine'
+import { VkApiClient } from './vk/api'
+import { VkLongPollRunner } from './vk/long-poll'
+import { VkTransport } from './vk/transport'
+import { VkUpdateAdapter } from './vk/updates'
 
 const config = loadConfig()
 const logger = pino({
   level: config.logLevel,
   redact: {
-    paths: ['telegramToken', 'paymentProviderToken', 'req.headers.authorization', 'req.headers.x-telegram-bot-api-secret-token'],
+    paths: ['telegramToken', 'paymentProviderToken', 'vk.token', 'req.headers.authorization', 'req.headers.x-telegram-bot-api-secret-token'],
     censor: '[REDACTED]',
   },
 })
@@ -32,6 +36,7 @@ const engine = new FunnelEngine(store, transport, {
   publicBaseUrl: config.publicBaseUrl,
   paymentProviderToken: config.paymentProviderToken,
 })
+const vkRuntime = config.vk ? createVkRuntime(config.vk) : null
 const adminRepository = new AdminRepository(pool, store)
 createTelegramBot(
   bot,
@@ -40,7 +45,18 @@ createTelegramBot(
   (targetBot) => new AdminController(targetBot, adminRepository, config, logger),
   logger,
 )
-const worker = createJobWorker(store, engine, logger, config.workerPollMs)
+const worker = createJobWorker(store, {
+  async handleJob(job) {
+    const sessionId = String(job.payload.sessionId ?? '')
+    const session = sessionId ? await store.getSession(sessionId) : null
+    const user = session ? await store.getUser(session.userId) : null
+    if (user?.platform === 'vk') {
+      if (!vkRuntime) throw new Error('VK_RUNTIME_DISABLED')
+      return vkRuntime.engine.handleJob(job)
+    }
+    return engine.handleJob(job)
+  },
+}, logger, config.workerPollMs)
 const maintenance = createMaintenanceWorker(pool, logger)
 const server = createHttpServer(config, pool, bot, engine, logger)
 
@@ -67,7 +83,8 @@ async function main() {
   await server.listen({ host: config.host, port: config.port })
   worker.start()
   maintenance.start()
-  logger.info({ mode: config.botMode, port: config.port }, 'Telegram runtime запущен')
+  vkRuntime?.longPoll.start()
+  logger.info({ mode: config.botMode, port: config.port, vk: Boolean(vkRuntime) }, 'Runtime запущен')
   if (config.botMode === 'polling') {
     void bot.start({
       allowed_updates: ['message', 'callback_query', 'pre_checkout_query'],
@@ -85,6 +102,7 @@ async function shutdown(signal: string) {
   shuttingDown = true
   logger.info({ signal }, 'Остановка Telegram runtime')
   if (config.botMode === 'polling' && bot.isRunning()) await bot.stop()
+  await vkRuntime?.longPoll.stop()
   await worker.stop()
   await maintenance.stop()
   await server.close()
@@ -99,3 +117,11 @@ main().catch(async (error) => {
   await shutdown('startup_error').catch(() => undefined)
   process.exitCode = 1
 })
+
+function createVkRuntime(vk: NonNullable<typeof config.vk>) {
+  const api = new VkApiClient(vk.token, vk.groupId, vk.apiVersion)
+  const vkTransport = new VkTransport(api, logger)
+  const vkEngine = new FunnelEngine(store, vkTransport, { publicBaseUrl: config.publicBaseUrl })
+  const adapter = new VkUpdateAdapter(store, vkEngine, api, logger)
+  return { engine: vkEngine, longPoll: new VkLongPollRunner(api, adapter, logger) }
+}

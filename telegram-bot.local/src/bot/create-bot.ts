@@ -15,7 +15,7 @@ export function createTelegramBot(
   const adminController = admin(bot)
 
   bot.use(async (ctx, next) => {
-    if (!await store.reserveUpdate(ctx.update.update_id)) return
+    if (!await store.reserveUpdate('telegram', String(ctx.update.update_id))) return
     await next()
   })
 
@@ -107,7 +107,8 @@ function toProfile(from: {
   language_code?: string
 }): TelegramProfile {
   return {
-    telegramId: String(from.id),
+    platform: 'telegram',
+    externalUserId: String(from.id),
     username: from.username,
     firstName: from.first_name,
     lastName: from.last_name,

@@ -9,7 +9,7 @@ export interface JobWorker {
   runOnce(): Promise<number>
 }
 
-export function createJobWorker(store: RuntimeStore, engine: FunnelEngine, logger: Logger, pollMs: number): JobWorker {
+export function createJobWorker(store: RuntimeStore, engine: Pick<FunnelEngine, 'handleJob'>, logger: Logger, pollMs: number): JobWorker {
   const workerId = `worker-${randomUUID()}`
   let timer: NodeJS.Timeout | undefined
   let stopped = true

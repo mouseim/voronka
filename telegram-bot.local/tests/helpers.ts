@@ -3,9 +3,11 @@ import path from 'node:path'
 import { expect } from 'vitest'
 import { parseAndMigrateFunnelDocument, type FunnelDocument, type MediaType } from '../src/core/shared'
 import type { InvoiceSpec, OutgoingButton, RuntimeTransport, TelegramProfile } from '../src/domain/types'
+import { telegramCapabilities } from '../src/runtime/capabilities'
 
 export const profile: TelegramProfile = {
-  telegramId: '10001',
+  platform: 'telegram',
+  externalUserId: '10001',
   username: 'runtime_test',
   firstName: 'Runtime',
   languageCode: 'ru',
@@ -20,6 +22,8 @@ export async function loadDemo(): Promise<FunnelDocument> {
 }
 
 export class FakeTransport implements RuntimeTransport {
+  readonly platform = 'telegram' as const
+  readonly capabilities = telegramCapabilities
   readonly texts: Array<{ telegramId: string; text: string; buttons?: OutgoingButton[][] }> = []
   readonly media: Array<{ telegramId: string; type: MediaType; fileId: string; caption?: string }> = []
   readonly invoices: Array<{ telegramId: string; invoice: InvoiceSpec }> = []

@@ -32,9 +32,10 @@ import type {
   RuntimeSession,
   RuntimeTransport,
   RuntimeUser,
-  TelegramProfile,
+  PlatformProfile,
 } from '../domain/types'
 import { applyQuietHours } from './quiet-hours'
+import { unsupportedReachableCapability } from './capabilities'
 import type { RuntimeStore } from './store'
 import { paymentProviderFor } from '../payments/providers'
 
@@ -58,20 +59,26 @@ export class FunnelEngine {
     this.transitionLimit = options.automaticTransitionLimit ?? 50
   }
 
-  async start(profile: TelegramProfile, trackingCode?: string): Promise<void> {
+  async start(profile: PlatformProfile, trackingCode?: string): Promise<void> {
+    this.assertProfilePlatform(profile)
     const user = await this.store.upsertUser(profile)
     const resolved = await this.store.resolveVersion(trackingCode)
     if (!resolved) {
-      await this.transport.sendText(user.telegramId, trackingCode
+      await this.transport.sendText(user.externalUserId, trackingCode
         ? 'Эта ссылка устарела или воронка ещё не опубликована.'
         : 'Администратор ещё не опубликовал основную воронку.')
       return
     }
     const { version, trackingId } = resolved
     const document = version.document
+    const unsupported = unsupportedReachableCapability(document, this.transport.capabilities)
+    if (unsupported) {
+      await this.transport.sendText(user.externalUserId, `Эта воронка использует неподдерживаемую на ${this.transport.platform} возможность: ${unsupported}.`)
+      throw new Error(`UNSUPPORTED_PLATFORM_CAPABILITY:${this.transport.platform}:${unsupported}`)
+    }
     if (user.optedOutAt) {
       if (!document.bot.optOut.allowRestart) {
-        await this.transport.sendText(user.telegramId, 'Повторный запуск отключён настройками этой воронки.')
+        await this.transport.sendText(user.externalUserId, 'Повторный запуск отключён настройками этой воронки.')
         return
       }
       await this.store.setOptOut(user.id, false, false)
@@ -87,7 +94,7 @@ export class FunnelEngine {
     }
     if (session && document.bot.reentryPolicy === 'show_result' && session.state.lastResultName) {
       const restart = await this.store.createCallback(user.id, session.id, { type: 'restart', funnelId: session.funnelId })
-      await this.transport.sendText(user.telegramId, `Ваш последний результат: ${session.state.lastResultName}`, [
+      await this.transport.sendText(user.externalUserId, `Ваш последний результат: ${session.state.lastResultName}`, [
         [{ text: 'Продолжить', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: session.currentNodeId ?? '', handle: '__resume' }) }],
         [{ text: 'Пройти заново', callbackToken: restart }],
       ])
@@ -97,7 +104,7 @@ export class FunnelEngine {
       const latest = await this.store.findLatestSession(user.id, version.funnelId)
       if (latest?.state.lastResultName) {
         const restart = await this.store.createCallback(user.id, latest.id, { type: 'restart', funnelId: latest.funnelId })
-        await this.transport.sendText(user.telegramId, `Ваш последний результат: ${latest.state.lastResultName}`, [
+        await this.transport.sendText(user.externalUserId, `Ваш последний результат: ${latest.state.lastResultName}`, [
           [{ text: 'Пройти заново', callbackToken: restart }],
         ])
         return
@@ -112,7 +119,7 @@ export class FunnelEngine {
         currentNodeId: document.funnel.startNodeId,
         sourceTrackingId: trackingId,
         sourceCode: trackingCode,
-        state: { variables: initialVariableValues(version.document.variables) },
+        state: { platform: user.platform, variables: initialVariableValues(version.document.variables) },
       })
       await this.scheduleRecovery(session)
       await this.event(session, 'session_started', { trackingCode }, 'start')
@@ -121,14 +128,16 @@ export class FunnelEngine {
     await this.run(user, session)
   }
 
-  async stop(profile: TelegramProfile): Promise<void> {
+  async stop(profile: PlatformProfile): Promise<void> {
+    this.assertProfilePlatform(profile)
     const user = await this.store.upsertUser(profile)
     const resolved = await this.store.resolveVersion()
     await this.stopUser(user, resolved?.version.document)
   }
 
-  async handleOptOutCommand(profile: TelegramProfile, text: string): Promise<boolean> {
-    const existingUser = await this.store.getUserByTelegramId(profile.telegramId)
+  async handleOptOutCommand(profile: PlatformProfile, text: string): Promise<boolean> {
+    this.assertProfilePlatform(profile)
+    const existingUser = await this.store.getUserByPlatformIdentity(profile.platform, profile.externalUserId)
     const session = existingUser ? await this.store.findAnyActiveSession(existingUser.id) : null
     const version = session ? await this.requireVersion(session.versionId) : (await this.store.resolveVersion())?.version
     const configured = normalizeTelegramCommand(version?.document.bot.optOut.command) ?? '/stop'
@@ -148,14 +157,17 @@ export class FunnelEngine {
       userId: user.id,
       payload: {},
     })
-    await this.transport.sendText(user.telegramId, document?.bot.optOut.confirmationText || 'Вы отписались от фоновых сообщений.')
+    await this.transport.sendText(user.externalUserId, document?.bot.optOut.confirmationText || 'Вы отписались от фоновых сообщений.')
   }
 
-  async handleCallback(profile: TelegramProfile, token: string): Promise<boolean> {
+  async handleCallback(profile: PlatformProfile, token: string): Promise<boolean> {
+    this.assertProfilePlatform(profile)
     const user = await this.store.upsertUser(profile)
     const callback = await this.store.consumeCallback(token, user.id)
     if (!callback) {
-      await this.transport.sendText(user.telegramId, 'Эта кнопка уже использована или устарела. Отправьте /start, чтобы продолжить.')
+      await this.transport.sendText(user.externalUserId, user.platform === 'telegram'
+        ? 'Эта кнопка уже использована или устарела. Отправьте /start, чтобы продолжить.'
+        : 'Эта кнопка уже использована или устарела. Напишите «Начать», чтобы продолжить.')
       return false
     }
     if (callback.action.type === 'restart') {
@@ -169,7 +181,7 @@ export class FunnelEngine {
       }
       const version = await this.store.resolveVersionByFunnel(callback.action.funnelId)
       if (!version) {
-        await this.transport.sendText(user.telegramId, 'Эта воронка больше не опубликована.')
+        await this.transport.sendText(user.externalUserId, 'Эта воронка больше не опубликована.')
         return false
       }
       const restarted = await this.store.createSession({
@@ -180,7 +192,7 @@ export class FunnelEngine {
         currentNodeId: version.document.funnel.startNodeId,
         sourceTrackingId,
         sourceCode,
-        state: { variables: initialVariableValues(version.document.variables) },
+        state: { platform: user.platform, variables: initialVariableValues(version.document.variables) },
       })
       await this.scheduleRecovery(restarted)
       await this.event(restarted, 'session_started', { restarted: true }, 'restart')
@@ -190,13 +202,13 @@ export class FunnelEngine {
     if (!callback.sessionId) return false
     let session = await this.store.getSession(callback.sessionId)
     if (!session || !['active', 'waiting'].includes(session.status)) {
-      await this.transport.sendText(user.telegramId, 'Это прохождение уже завершено.')
+      await this.transport.sendText(user.externalUserId, 'Это прохождение уже завершено.')
       return false
     }
     const version = await this.requireVersion(session.versionId)
     const action = callback.action
     if ('nodeId' in action && action.nodeId !== session.currentNodeId) {
-      await this.transport.sendText(user.telegramId, 'Эта кнопка относится к предыдущему этапу и больше не действует.')
+      await this.transport.sendText(user.externalUserId, 'Эта кнопка относится к предыдущему этапу и больше не действует.')
       return false
     }
     if (version.document.bot.reminders.cancelAfterContinue) {
@@ -229,7 +241,7 @@ export class FunnelEngine {
       const question = this.currentQuestion(version.document, run)
       if (!run || !question || question.id !== action.questionId) return false
       if (question.required && !run.selected.length) {
-        await this.transport.sendText(user.telegramId, 'Выберите хотя бы один вариант.')
+        await this.transport.sendText(user.externalUserId, 'Выберите хотя бы один вариант.')
         return false
       }
       session = await this.applyTestAnswer(session, version.document, {
@@ -281,11 +293,14 @@ export class FunnelEngine {
     return false
   }
 
-  async handleText(profile: TelegramProfile, text: string): Promise<boolean> {
+  async handleText(profile: PlatformProfile, text: string): Promise<boolean> {
+    this.assertProfilePlatform(profile)
     const user = await this.store.upsertUser(profile)
     const session = await this.store.findAnyActiveSession(user.id)
     if (!session) {
-      await this.transport.sendText(user.telegramId, 'Сейчас нет активного прохождения. Отправьте /start.')
+      await this.transport.sendText(user.externalUserId, user.platform === 'telegram'
+        ? 'Сейчас нет активного прохождения. Отправьте /start.'
+        : 'Сейчас нет активного прохождения. Напишите «Начать».')
       return false
     }
     const version = await this.requireVersion(session.versionId)
@@ -294,7 +309,7 @@ export class FunnelEngine {
     }
     if (session.state.testRun) return this.handleTestText(user, session, version, text)
     if (session.state.formRun) return this.handleFormText(user, session, version, text)
-    await this.transport.sendText(user.telegramId, 'Используйте кнопки под последним сообщением.')
+    await this.transport.sendText(user.externalUserId, 'Используйте кнопки под последним сообщением.')
     return false
   }
 
@@ -309,11 +324,12 @@ export class FunnelEngine {
     return { ok: true }
   }
 
-  async handleSuccessfulPayment(profile: TelegramProfile, input: { payload: string; amountMinor: number; currency: string; telegramChargeId: string; providerChargeId?: string }): Promise<boolean> {
+  async handleSuccessfulPayment(profile: PlatformProfile, input: { payload: string; amountMinor: number; currency: string; telegramChargeId: string; providerChargeId?: string }): Promise<boolean> {
+    this.assertProfilePlatform(profile)
     const user = await this.store.upsertUser(profile)
     const check = await this.validatePreCheckout(input.payload, input.amountMinor, input.currency)
     if (!check.ok) {
-      await this.transport.sendText(user.telegramId, check.message ?? 'Не удалось подтвердить платёж.')
+      await this.transport.sendText(user.externalUserId, check.message ?? 'Не удалось подтвердить платёж.')
       return false
     }
     const payment = await this.store.getPaymentByPayload(input.payload)
@@ -377,7 +393,7 @@ export class FunnelEngine {
       const count = Number(job.payload.count ?? 1)
       if (session.currentNodeId !== expectedNode || session.status !== 'waiting') return
       const text = String(job.payload.text ?? 'Продолжим? Ваш результат и ответы сохранены.')
-      await this.transport.sendText(user.telegramId, text)
+      await this.transport.sendText(user.externalUserId, text)
       await this.event(session, 'reminder_sent', { count }, `reminder:${expectedNode}:${count}`)
       session.state.remindersSent = count
       await this.save(session)
@@ -473,7 +489,7 @@ export class FunnelEngine {
       }
       if (node.type === 'end') {
         const text = String((node.data as { text?: string }).text ?? '')
-        await this.sendText(user.telegramId, this.render(document, session, text))
+        await this.sendText(user.externalUserId, this.render(document, session, text))
         session.status = 'completed'
         session.currentNodeId = null
         session.state.awaiting = undefined
@@ -487,7 +503,7 @@ export class FunnelEngine {
     session.status = 'failed'
     await this.event(session, 'runtime_error', { code: 'AUTOMATIC_TRANSITION_LIMIT' }, `limit:${session.revision}`)
     await this.save(session)
-    await this.transport.sendText(user.telegramId, 'Сценарий остановлен из-за ошибки связей. Администратор уже уведомлён.')
+    await this.transport.sendText(user.externalUserId, 'Сценарий остановлен из-за ошибки связей. Администратор уже уведомлён.')
     await this.transport.notifyAdministrators(`Runtime остановил воронку ${document.funnel.key} v${document.funnel.version}: превышен лимит автоматических переходов.`)
   }
 
@@ -505,7 +521,7 @@ export class FunnelEngine {
       }
     }
     if (!branches.length) rows.push([{ text: 'Продолжить', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: node.id, handle: 'next' }) }])
-    await this.sendText(user.telegramId, this.render(version.document, session, data.text), rows)
+    await this.sendText(user.externalUserId, this.render(version.document, session, data.text), rows)
     session.status = 'waiting'
     session.state.awaiting = 'callback'
     await this.scheduleReminder(session, version.document, 'stage')
@@ -514,8 +530,13 @@ export class FunnelEngine {
 
   private async sendNodeMedia(user: RuntimeUser, session: RuntimeSession, version: FunnelVersionRecord, node: FunnelNode) {
     const data = node.data as MediaData
+    if (!this.transport.capabilities.media) {
+      if (data.required) throw new Error(`UNSUPPORTED_PLATFORM_CAPABILITY:${this.transport.platform}:media:${node.id}`)
+      await this.event(session, 'media_missing', { assetId: data.assetId, optional: true, platform: this.transport.platform }, `media_unsupported:${node.id}:${session.revision}`)
+      return
+    }
     if (!data.assetId) {
-      if (data.required) await this.sendText(user.telegramId, '[Здесь должен быть обязательный файл: материал не выбран]')
+      if (data.required) await this.sendText(user.externalUserId, '[Здесь должен быть обязательный файл: материал не выбран]')
       return
     }
     await this.sendAsset(user, session, version, data.assetId, this.render(version.document, session, data.caption), data.required)
@@ -527,8 +548,8 @@ export class FunnelEngine {
     const binding = await this.store.getMediaBinding(version.id, assetId)
     if (binding?.telegramFileId) {
       const captionChars = Array.from(caption)
-      await this.transport.sendMedia(user.telegramId, asset.type, binding.telegramFileId, captionChars.slice(0, 1024).join(''))
-      if (captionChars.length > 1024) await this.sendText(user.telegramId, captionChars.slice(1024).join(''))
+      await this.transport.sendMedia(user.externalUserId, asset.type, binding.telegramFileId, captionChars.slice(0, 1024).join(''))
+      if (captionChars.length > 1024) await this.sendText(user.externalUserId, captionChars.slice(1024).join(''))
       await this.event(session, 'media_sent', { assetId, type: asset.type }, `media:${assetId}:${session.revision}`)
       return
     }
@@ -538,7 +559,7 @@ export class FunnelEngine {
       return
     }
     const placeholder = `[Здесь должен быть файл: «${asset.name}», тип: ${asset.type}]`
-    if (version.allowPlaceholders) await this.sendText(user.telegramId, placeholder)
+    if (version.allowPlaceholders) await this.sendText(user.externalUserId, placeholder)
     await this.event(session, 'media_missing', { assetId, key: asset.key, required: true }, `media_missing:${assetId}:${session.revision}`)
     const notified = session.state.missingMediaNotified ?? []
     if (!notified.includes(assetId)) {
@@ -597,7 +618,7 @@ export class FunnelEngine {
       session.state.awaiting = 'callback'
       await this.event(session, 'test_started', { testId }, `test_start:${node.id}:${session.revision}`)
       const welcome = String((node.data as { welcomeText?: string }).welcomeText ?? '')
-      if (welcome) await this.sendText(user.telegramId, this.render(version.document, session, welcome))
+      if (welcome) await this.sendText(user.externalUserId, this.render(version.document, session, welcome))
     }
     await this.askTestQuestion(user, session, version)
   }
@@ -625,13 +646,13 @@ export class FunnelEngine {
       secondaryResultId: calculated.secondary?.id,
       chosenResultId: result.id,
     }, `test_complete:${run.nodeId}:${session.revision}`)
-    await this.sendText(user.telegramId, this.render(version.document, session, [result.shortText, result.fullText, result.recommendations].filter(Boolean).join('\n\n')))
+    await this.sendText(user.externalUserId, this.render(version.document, session, [result.shortText, result.fullText, result.recommendations].filter(Boolean).join('\n\n')))
     if (result.assetId) await this.sendAsset(user, session, version, result.assetId)
     const rows = await this.resultButtons(user, session, version.document, result.buttons, run.nodeId, result.id)
     if (!branchButtons(result.buttons).length) {
       rows.push([{ text: 'Продолжить', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: run.nodeId, handle: result.id }) }])
     }
-    if (rows.length) await this.transport.sendText(user.telegramId, 'Что сделать дальше?', rows)
+    if (rows.length) await this.transport.sendText(user.externalUserId, 'Что сделать дальше?', rows)
     await this.event(session, 'result_viewed', { resultId: result.id, name: result.name }, `result:${result.id}:${session.revision}`)
     session.state.testRun = undefined
     session.state.awaiting = 'callback'
@@ -674,7 +695,7 @@ export class FunnelEngine {
     }
     if (!question.required) rows.push([{ text: 'Пропустить', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'test_skip', nodeId: run.nodeId, testId: test.id, questionId: question.id }) }])
     const counter = `${run.index + 1}/${run.questionOrder.length}`
-    await this.transport.sendText(user.telegramId, `${counter}. ${this.render(version.document, session, question.text)}`, rows)
+    await this.transport.sendText(user.externalUserId, `${counter}. ${this.render(version.document, session, question.text)}`, rows)
     await this.event(session, 'question_viewed', { testId: test.id, questionId: question.id }, `question_view:${question.id}:${run.index}`)
     session.state.awaiting = ['number', 'text'].includes(question.type) ? 'text' : 'callback'
     session.status = 'waiting'
@@ -714,14 +735,14 @@ export class FunnelEngine {
     if (!run || !question || !['number', 'text'].includes(question.type)) return false
     const trimmed = text.trim()
     if (!trimmed && question.required) {
-      await this.transport.sendText(user.telegramId, 'Ответ не может быть пустым.')
+      await this.transport.sendText(user.externalUserId, 'Ответ не может быть пустым.')
       return false
     }
     let value: string | number = trimmed
     if (question.type === 'number') {
       const normalized = Number(trimmed.replace(',', '.'))
       if (!Number.isFinite(normalized)) {
-        await this.transport.sendText(user.telegramId, 'Введите число, например 7 или 7,5.')
+        await this.transport.sendText(user.externalUserId, 'Введите число, например 7 или 7,5.')
         return false
       }
       value = normalized
@@ -743,7 +764,7 @@ export class FunnelEngine {
     if (!session.state.formRun || session.state.formRun.nodeId !== node.id) {
       session.state.formRun = { nodeId: node.id, index: 0, values: {} }
       await this.event(session, 'form_started', {}, `form_start:${node.id}:${session.revision}`)
-      if (data.introText) await this.sendText(user.telegramId, this.render(version.document, session, data.introText))
+      if (data.introText) await this.sendText(user.externalUserId, this.render(version.document, session, data.introText))
     }
     await this.promptFormField(user, session, version, node)
   }
@@ -760,7 +781,7 @@ export class FunnelEngine {
       const nextNode = version.document.nodes.find((item) => item.id === nextId)
       if (nextNode?.type === 'consent') session.state.pendingFormSubmission = { values }
       else await this.persistApplication(user, session, values)
-      await this.sendText(user.telegramId, this.render(version.document, session, data.confirmationText))
+      await this.sendText(user.externalUserId, this.render(version.document, session, data.confirmationText))
       await this.event(session, 'form_submitted', { fieldCount: Object.keys(values).length }, `form_submit:${node.id}:${session.revision}`)
       const advanced = await this.advanceAndSave(session, version.document, node.id, 'submitted')
       await this.run(user, advanced)
@@ -772,7 +793,7 @@ export class FunnelEngine {
       return this.promptFormField(user, session, version, node)
     }
     const cancel = await this.store.createCallback(user.id, session.id, { type: 'form_cancel', nodeId: node.id })
-    await this.transport.sendText(user.telegramId, `${this.render(version.document, session, field.label)}${field.required ? ' *' : ''}`, [[{ text: 'Отменить', callbackToken: cancel }]])
+    await this.transport.sendText(user.externalUserId, `${this.render(version.document, session, field.label)}${field.required ? ' *' : ''}`, [[{ text: 'Отменить', callbackToken: cancel }]])
     session.status = 'waiting'
     session.state.awaiting = 'text'
     await this.scheduleReminder(session, version.document, 'stage')
@@ -788,15 +809,15 @@ export class FunnelEngine {
     if (!run || !field) return false
     const value = text.trim()
     if (!value && field.required) {
-      await this.transport.sendText(user.telegramId, 'Это поле обязательно.')
+      await this.transport.sendText(user.externalUserId, 'Это поле обязательно.')
       return false
     }
     if (field.type === 'email' && value && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) {
-      await this.transport.sendText(user.telegramId, 'Проверьте email: нужен адрес вида name@example.com.')
+      await this.transport.sendText(user.externalUserId, 'Проверьте email: нужен адрес вида name@example.com.')
       return false
     }
     if (field.type === 'phone' && value && value.replace(/\D/g, '').length < 7) {
-      await this.transport.sendText(user.telegramId, 'Проверьте номер телефона.')
+      await this.transport.sendText(user.externalUserId, 'Проверьте номер телефона.')
       return false
     }
     run.values[field.id] = value
@@ -813,7 +834,7 @@ export class FunnelEngine {
     const created = await this.store.saveContactAndApplication(session, values)
     await this.transport.notifyAdministrators([
       'Новая заявка',
-      `Telegram ID: ${user.telegramId}`,
+      `${user.platform.toUpperCase()} ID: ${user.externalUserId}`,
       ...Object.entries(values).map(([key, value]) => `${key}: ${value}`),
     ].join('\n'))
     await this.event(session, 'application_created', created, `application:${created.applicationId}`)
@@ -825,17 +846,17 @@ export class FunnelEngine {
     if (data.policyUrl) rows.push([{ text: 'Политика обработки данных', url: data.policyUrl }])
     rows.push([{ text: this.render(document, session, data.acceptText), callbackToken: await this.store.createCallback(user.id, session.id, { type: 'consent', nodeId: node.id, accepted: true }) }])
     if (data.declineEnabled) rows.push([{ text: this.render(document, session, data.declineText), callbackToken: await this.store.createCallback(user.id, session.id, { type: 'consent', nodeId: node.id, accepted: false }) }])
-    await this.sendText(user.telegramId, this.render(document, session, data.text), rows)
+    await this.sendText(user.externalUserId, this.render(document, session, data.text), rows)
   }
 
   private async sendProductNode(user: RuntimeUser, session: RuntimeSession, version: FunnelVersionRecord, node: FunnelNode) {
     const data = node.data as ProductBlockData
     const product = version.document.products.find((item) => item.id === data.productId)
     if (!product || !product.active) {
-      await this.sendText(user.telegramId, 'Предложение сейчас недоступно.')
+      await this.sendText(user.externalUserId, 'Предложение сейчас недоступно.')
       const handle = data.allowSkip ? 'skip' : 'failed'
       const token = await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: node.id, handle })
-      await this.transport.sendText(user.telegramId, 'Продолжить', [[{ text: 'Продолжить', callbackToken: token }]])
+      await this.transport.sendText(user.externalUserId, 'Продолжить', [[{ text: 'Продолжить', callbackToken: token }]])
       session.status = 'waiting'
       session.state.awaiting = 'callback'
       await this.save(session)
@@ -846,10 +867,10 @@ export class FunnelEngine {
     const repeatPolicy = config?.repeatPolicy ?? 'redeliver'
     if (alreadyPurchased && repeatPolicy !== 'repurchase') {
       if (repeatPolicy === 'redeliver') {
-        await this.sendText(user.telegramId, 'Вы уже покупали этот материал. Отправляю его повторно.')
+        await this.sendText(user.externalUserId, 'Вы уже покупали этот материал. Отправляю его повторно.')
         if (config) await this.deliverConfiguredAssets(user, session, version, config, null, false)
       } else {
-        await this.sendText(user.telegramId, 'Вы уже покупали этот материал. Повторная покупка отключена.')
+        await this.sendText(user.externalUserId, 'Вы уже покупали этот материал. Повторная покупка отключена.')
       }
       const advanced = await this.advanceAndSave(session, version.document, node.id, 'already_purchased')
       await this.run(user, advanced)
@@ -861,7 +882,7 @@ export class FunnelEngine {
       callbackToken: await this.store.createCallback(user.id, session.id, { type: 'product_buy', nodeId: node.id, productId: product.id }),
     }]]
     if (data.allowSkip) rows.push([{ text: 'Продолжить без покупки', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'product_skip', nodeId: node.id }) }])
-    await this.sendText(user.telegramId, this.render(version.document, session, [data.headline, data.description].filter(Boolean).join('\n\n')), rows)
+    await this.sendText(user.externalUserId, this.render(version.document, session, [data.headline, data.description].filter(Boolean).join('\n\n')), rows)
     session.status = 'waiting'
     session.state.awaiting = 'payment'
     await this.save(session)
@@ -871,7 +892,7 @@ export class FunnelEngine {
     const product = version.document.products.find((item) => item.id === productId)
     const config = await this.store.getProductConfig(version.id, productId)
     if (!product || !product.active || !config || config.provider === 'unconfigured') {
-      await this.transport.sendText(user.telegramId, 'Оплата этого продукта ещё не настроена администратором.')
+      await this.transport.sendText(user.externalUserId, 'Оплата этого продукта ещё не настроена администратором.')
       return
     }
     let provider
@@ -884,7 +905,7 @@ export class FunnelEngine {
         : code === 'TELEGRAM_PAYMENT_PROVIDER_TOKEN_REQUIRED'
           ? 'Платёжный provider token ещё не настроен.'
           : 'Настройки оплаты некорректны.'
-      await this.transport.sendText(user.telegramId, text)
+      await this.transport.sendText(user.externalUserId, text)
       return
     }
     const alreadyPurchased = await this.store.hasPurchase(user.id, version.id, productId)
@@ -920,7 +941,7 @@ export class FunnelEngine {
       await this.finishPayment(user, payment, `mock_${payment.id}`)
       return
     }
-    await this.transport.sendInvoice(user.telegramId, {
+    await this.transport.sendInvoice(user.externalUserId, {
       title: product.name.slice(0, 32),
       description: product.description.slice(0, 255) || product.name,
       payload: payment.invoicePayload,
@@ -943,7 +964,7 @@ export class FunnelEngine {
     if (!config) return
     const purchase = await this.store.recordPurchase(paid.payment)
     if (paid.firstSuccess) {
-      await this.sendText(user.telegramId, this.render(version.document, session, config.afterPurchaseText || version.document.products.find((item) => item.id === payment.productId)?.afterPurchaseText || 'Спасибо за покупку!'))
+      await this.sendText(user.externalUserId, this.render(version.document, session, config.afterPurchaseText || version.document.products.find((item) => item.id === payment.productId)?.afterPurchaseText || 'Спасибо за покупку!'))
       await this.event(session, 'payment_succeeded', { paymentId: payment.id, productId: payment.productId, amountMinor: payment.amountMinor, currency: payment.currency }, `payment_success:${payment.id}`)
     }
     if (purchase.created || config.repeatPolicy !== 'repurchase') {
@@ -979,10 +1000,10 @@ export class FunnelEngine {
       const suffix = !this.options.publicBaseUrl
         ? '\n\nЛокальный режим: Telegram не сообщает о клике по ссылке, поэтому после просмотра нажмите «Продолжить».'
         : '\n\nПосле просмотра нажмите «Продолжить».'
-      await this.sendText(user.telegramId, `${this.render(document, session, data.text)}${suffix}`, rows)
+      await this.sendText(user.externalUserId, `${this.render(document, session, data.text)}${suffix}`, rows)
       return
     }
-    await this.sendText(user.telegramId, this.render(document, session, data.text), rows)
+    await this.sendText(user.externalUserId, this.render(document, session, data.text), rows)
   }
 
   private async safeActionUrl(user: RuntimeUser, session: RuntimeSession, target: string, continueAfterClick: boolean) {
@@ -1078,14 +1099,14 @@ export class FunnelEngine {
     })
   }
 
-  private async sendText(telegramId: string, text: string, buttons?: OutgoingButton[][]) {
+  private async sendText(recipientId: string, text: string, buttons?: OutgoingButton[][]) {
     const parts = splitTelegramText(text)
     if (!parts.length && buttons?.length) {
-      await this.transport.sendText(telegramId, 'Продолжить', buttons)
+      await this.transport.sendText(recipientId, 'Продолжить', buttons)
       return
     }
     for (let index = 0; index < parts.length; index += 1) {
-      await this.transport.sendText(telegramId, parts[index]!, index === parts.length - 1 ? buttons : undefined)
+      await this.transport.sendText(recipientId, parts[index]!, index === parts.length - 1 ? buttons : undefined)
     }
   }
 
@@ -1105,6 +1126,12 @@ export class FunnelEngine {
     return version
   }
 
+  private assertProfilePlatform(profile: PlatformProfile) {
+    if (profile.platform !== this.transport.platform) {
+      throw new Error(`PLATFORM_TRANSPORT_MISMATCH:${profile.platform}:${this.transport.platform}`)
+    }
+  }
+
   private async event(session: RuntimeSession, type: string, payload: Record<string, unknown>, suffix: string) {
     await this.store.appendEvent({
       idempotencyKey: `${session.id}:${type}:${suffix}`,
@@ -1115,7 +1142,7 @@ export class FunnelEngine {
       versionId: session.versionId,
       nodeId: session.currentNodeId ?? undefined,
       trackingId: session.sourceTrackingId,
-      payload,
+      payload: { platform: session.state.platform, ...payload },
       occurredAt: this.now().toISOString(),
     })
   }
