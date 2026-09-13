@@ -4,6 +4,7 @@ import type { Logger } from 'pino'
 import { parseAndMigrateFunnelDocument, type MediaType } from '../core/shared'
 import type { AppConfig } from '../config'
 import type { AdminRepository } from './repository'
+import type { VkMediaBindingService } from '../vk/media-bindings'
 
 type AdminAction =
   | { type: 'main' }
@@ -30,6 +31,7 @@ type AdminAction =
 type AdminInputState =
   | { type: 'import' }
   | { type: 'media'; versionId: string; assetId: string; expectedType: MediaType }
+  | { type: 'vk_media'; versionId: string; assetId: string; expectedType: MediaType; peerId: string }
 
 interface ActionRecord {
   adminId: string
@@ -47,6 +49,7 @@ export class AdminController {
     private readonly repository: AdminRepository,
     private readonly config: AppConfig,
     private readonly logger: Logger,
+    private readonly vkMedia?: VkMediaBindingService,
   ) {}
 
   isAdministrator(ctx: Context) {
@@ -97,6 +100,25 @@ export class AdminController {
         await ctx.reply('Настройки продукта сохранены. Перед публикацией запустите проверку версии.')
         return
       }
+      if (command === 'vkmedia') {
+        const [versionId, assetId, peerId, attachment] = args.trim().split(/\s+/)
+        if (!versionId || !assetId || !peerId || !/^-?\d+$/.test(peerId)) {
+          await ctx.reply('Формат: /vkmedia VERSION_ID ASSET_ID PEER_ID [videoOWNER_ID_MEDIA_ID_ACCESS_KEY]')
+          return
+        }
+        if (!this.vkMedia) throw new Error('VK_RUNTIME_DISABLED')
+        if (attachment) {
+          const saved = await this.vkMedia.bindExisting(versionId, assetId, attachment, adminId)
+          await ctx.reply(`VK binding сохранён: ${saved.type}${saved.ownerId}_${saved.mediaId}.`)
+          return
+        }
+        const asset = (await this.repository.listMedia(versionId)).find((item) => item.asset_id === assetId)
+        if (!asset) throw new Error('ASSET_NOT_FOUND')
+        if (!['image', 'voice', 'document'].includes(asset.expected_type)) throw new Error(`VK_MEDIA_UPLOAD_UNSUPPORTED:${asset.expected_type}`)
+        this.input.set(adminId, { type: 'vk_media', versionId, assetId, expectedType: asset.expected_type, peerId })
+        await ctx.reply(`Отправьте файл ${asset.expected_type}. Он будет один раз загружен в VK для peer_id ${peerId}.`)
+        return
+      }
       if (command === 'rollback') {
         const [funnelId, versionId] = args.trim().split(/\s+/)
         if (!funnelId || !versionId) {
@@ -126,7 +148,7 @@ export class AdminController {
     const adminId = String(ctx.from.id)
     const state = this.input.get(adminId)
     if (!state) return false
-    if (state.type === 'media') return this.handleMedia(ctx)
+    if (state.type === 'media' || state.type === 'vk_media') return this.handleMedia(ctx)
     this.input.delete(adminId)
     const lastImport = this.lastImportAt.get(adminId) ?? 0
     if (Date.now() - lastImport < 5_000) {
@@ -168,7 +190,7 @@ export class AdminController {
     if (!this.isAdministrator(ctx) || !ctx.from || !ctx.message) return false
     const adminId = String(ctx.from.id)
     const state = this.input.get(adminId)
-    if (!state || state.type !== 'media') return false
+    if (!state || (state.type !== 'media' && state.type !== 'vk_media')) return false
     const media = extractMedia(ctx)
     if (!media) {
       await ctx.reply(`Ожидается Telegram‑сообщение типа ${state.expectedType}.`)
@@ -179,9 +201,25 @@ export class AdminController {
       return true
     }
     try {
-      await this.repository.bindMedia(state.versionId, state.assetId, media, adminId)
+      let confirmation: string
+      if (state.type === 'vk_media') {
+        if (!this.vkMedia) throw new Error('VK_RUNTIME_DISABLED')
+        const content = await this.downloadTelegramFile(media.fileId, this.config.maxMediaBytes)
+        const saved = await this.vkMedia.uploadAndBind({
+          versionId: state.versionId,
+          assetId: state.assetId,
+          mediaType: state.expectedType,
+          peerId: state.peerId,
+          file: { content, filename: media.filename, mimeType: media.mimeType },
+          adminTelegramId: adminId,
+        })
+        confirmation = `Файл загружен в VK и привязан: ${saved.type}${saved.ownerId}_${saved.mediaId}.`
+      } else {
+        await this.repository.bindMedia(state.versionId, state.assetId, media, adminId)
+        confirmation = 'Telegram-файл привязан и проверен.'
+      }
       this.input.delete(adminId)
-      await ctx.reply('Файл привязан и проверен.', {
+      await ctx.reply(confirmation, {
         reply_markup: this.keyboard(adminId, [
           [{ text: '← К файлам', action: { type: 'media', versionId: state.versionId } }],
         ]),
@@ -257,7 +295,7 @@ export class AdminController {
     }
     if (action.type === 'media') {
       const rows = await this.repository.listMedia(action.versionId)
-      await ctx.reply(rows.length ? rows.map((row) => `${row.bound ? '✅' : '❓'} ${row.asset_key} · ${row.expected_type}`).join('\n') : 'В версии нет медиа‑ресурсов.', {
+      await ctx.reply(rows.length ? rows.map((row) => `TG ${row.telegram_bound ? '✅' : '❓'} · VK ${row.vk_bound ? '✅' : '❓'} · ${row.asset_key} · ${row.expected_type}`).join('\n') : 'В версии нет медиа‑ресурсов.', {
         reply_markup: this.keyboard(adminId, [
           ...rows.map((row) => [{
             text: `${row.bound ? '✅' : '❓'} ${row.asset_key}`,
@@ -272,7 +310,9 @@ export class AdminController {
       const row = (await this.repository.listMedia(action.versionId)).find((item) => item.asset_id === action.assetId)
       if (!row) throw new Error('ASSET_NOT_FOUND')
       await ctx.reply([
-        `${row.bound ? '✅ Привязан' : '❓ Не загружен'}: ${row.asset_key}`,
+        `Telegram: ${row.telegram_bound ? '✅ привязан' : '❓ не загружен'}`,
+        `VK: ${row.vk_bound ? `✅ ${row.vk_attachment_type}${row.vk_owner_id}_${row.vk_media_id}` : '❓ не привязан'}`,
+        `Asset: ${row.asset_key}`,
         `Ожидаемый тип: ${row.expected_type}`,
         row.file_size ? `Размер: ${row.file_size} байт` : '',
         row.mime_type ? `MIME: ${row.mime_type}` : '',
@@ -365,6 +405,13 @@ export class AdminController {
         'Пример mock:',
         '/product <version> <product> digital mock RUB 99000 <asset>',
         '',
+        'VK photo/voice/document upload:',
+        '/vkmedia VERSION_ID ASSET_ID VK_PEER_ID',
+        'Затем отправьте файл в этот чат.',
+        '',
+        'VK video binding:',
+        '/vkmedia VERSION_ID ASSET_ID VK_PEER_ID video-123_456_accessKey',
+        '',
         'Stars: provider=telegram_stars, currency=XTR.',
         'ЮKassa: provider=yookassa и TELEGRAM_PAYMENT_PROVIDER_TOKEN; digital через ЮKassa запрещён.',
         '',
@@ -430,15 +477,15 @@ export class AdminController {
     return false
   }
 
-  private async downloadTelegramFile(fileId: string) {
+  private async downloadTelegramFile(fileId: string, maxBytes = this.config.maxFunnelBytes) {
     const file = await this.bot.api.getFile(fileId)
     if (!file.file_path) throw new Error('Telegram не вернул путь к файлу.')
     const response = await fetch(`https://api.telegram.org/file/bot${this.config.telegramToken}/${file.file_path}`)
     if (!response.ok) throw new Error(`Telegram file API: HTTP ${response.status}`)
     const announced = Number(response.headers.get('content-length') ?? 0)
-    if (announced > this.config.maxFunnelBytes) throw new Error('Файл превышает MAX_FUNNEL_BYTES.')
+    if (announced > maxBytes) throw new Error(`Файл превышает допустимые ${maxBytes} байт.`)
     const content = Buffer.from(await response.arrayBuffer())
-    if (content.length > this.config.maxFunnelBytes) throw new Error('Файл превышает MAX_FUNNEL_BYTES.')
+    if (content.length > maxBytes) throw new Error(`Файл превышает допустимые ${maxBytes} байт.`)
     return content
   }
 }
@@ -449,19 +496,20 @@ function extractMedia(ctx: Context): {
   fileUniqueId?: string
   mimeType?: string
   fileSize?: number
+  filename: string
 } | null {
   const message = ctx.message
   if (!message) return null
   if (message.photo?.length) {
     const item = message.photo.at(-1)!
-    return { type: 'image', fileId: item.file_id, fileUniqueId: item.file_unique_id, fileSize: item.file_size }
+    return { type: 'image', fileId: item.file_id, fileUniqueId: item.file_unique_id, fileSize: item.file_size, filename: 'photo.jpg' }
   }
-  if (message.video) return { type: 'video', fileId: message.video.file_id, fileUniqueId: message.video.file_unique_id, mimeType: message.video.mime_type, fileSize: message.video.file_size }
-  if (message.audio) return { type: 'audio', fileId: message.audio.file_id, fileUniqueId: message.audio.file_unique_id, mimeType: message.audio.mime_type, fileSize: message.audio.file_size }
-  if (message.voice) return { type: 'voice', fileId: message.voice.file_id, fileUniqueId: message.voice.file_unique_id, mimeType: message.voice.mime_type, fileSize: message.voice.file_size }
-  if (message.video_note) return { type: 'video_note', fileId: message.video_note.file_id, fileUniqueId: message.video_note.file_unique_id, fileSize: message.video_note.file_size }
-  if (message.animation) return { type: 'animation', fileId: message.animation.file_id, fileUniqueId: message.animation.file_unique_id, mimeType: message.animation.mime_type, fileSize: message.animation.file_size }
-  if (message.document) return { type: 'document', fileId: message.document.file_id, fileUniqueId: message.document.file_unique_id, mimeType: message.document.mime_type, fileSize: message.document.file_size }
+  if (message.video) return { type: 'video', fileId: message.video.file_id, fileUniqueId: message.video.file_unique_id, mimeType: message.video.mime_type, fileSize: message.video.file_size, filename: message.video.file_name ?? 'video.mp4' }
+  if (message.audio) return { type: 'audio', fileId: message.audio.file_id, fileUniqueId: message.audio.file_unique_id, mimeType: message.audio.mime_type, fileSize: message.audio.file_size, filename: message.audio.file_name ?? 'audio.mp3' }
+  if (message.voice) return { type: 'voice', fileId: message.voice.file_id, fileUniqueId: message.voice.file_unique_id, mimeType: message.voice.mime_type, fileSize: message.voice.file_size, filename: 'voice.ogg' }
+  if (message.video_note) return { type: 'video_note', fileId: message.video_note.file_id, fileUniqueId: message.video_note.file_unique_id, fileSize: message.video_note.file_size, filename: 'video-note.mp4' }
+  if (message.animation) return { type: 'animation', fileId: message.animation.file_id, fileUniqueId: message.animation.file_unique_id, mimeType: message.animation.mime_type, fileSize: message.animation.file_size, filename: message.animation.file_name ?? 'animation.gif' }
+  if (message.document) return { type: 'document', fileId: message.document.file_id, fileUniqueId: message.document.file_unique_id, mimeType: message.document.mime_type, fileSize: message.document.file_size, filename: message.document.file_name ?? 'document' }
   return null
 }
 
@@ -496,6 +544,8 @@ function humanError(error: unknown) {
     STARS_REQUIRES_XTR: 'Для Telegram Stars валюта должна быть XTR.',
     ASSET_NOT_FOUND: 'Ресурс не найден в этой версии.',
     MEDIA_NOT_BOUND: 'Файл ещё не привязан.',
+    VK_RUNTIME_DISABLED: 'VK runtime не настроен: задайте VK_GROUP_ID и VK_GROUP_TOKEN.',
+    VK_ATTACHMENT_INVALID: 'Некорректный VK attachment. Пример: video-123_456_accessKey.',
   }
   if (message.startsWith('MEDIA_TYPE_MISMATCH:')) return `Ожидается тип ${message.split(':')[1]}.`
   return known[message] ?? message

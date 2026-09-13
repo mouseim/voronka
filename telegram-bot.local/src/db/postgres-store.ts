@@ -15,6 +15,7 @@ import type {
   RuntimeUser,
   Platform,
   PlatformProfile,
+  VkAttachmentType,
 } from '../domain/types'
 import type { RuntimeStore } from '../runtime/store'
 import type { DatabasePool } from './pool'
@@ -224,14 +225,16 @@ export class PostgresRuntimeStore implements RuntimeStore {
     return result.rows[0] ? mapRedirect(result.rows[0]) : null
   }
 
-  async getMediaBinding(versionId: string, assetId: string) {
+  async getMediaBinding(versionId: string, assetId: string, platform: Platform) {
     const result = await this.pool.query<MediaRow>(`
-      SELECT b.asset_id, b.asset_key, b.expected_type, r.telegram_file_id,
-             r.telegram_file_unique_id, r.mime_type, r.file_size
+      SELECT b.asset_id, b.asset_key, b.expected_type, b.platform,
+             b.vk_attachment_type, b.vk_owner_id, b.vk_media_id, b.vk_access_key,
+             r.telegram_file_id, r.telegram_file_unique_id, r.mime_type, r.file_size
       FROM version_media_bindings b
       LEFT JOIN media_resources r ON r.id = b.resource_id
-      WHERE b.version_id = $1 AND b.asset_id = $2
-    `, [versionId, assetId])
+      WHERE b.version_id = $1 AND b.asset_id = $2 AND b.platform = $3
+        AND (b.platform <> 'telegram' OR r.telegram_file_id IS NOT NULL)
+    `, [versionId, assetId, platform])
     return result.rows[0] ? mapMedia(result.rows[0]) : null
   }
 
@@ -502,10 +505,15 @@ interface MediaRow extends QueryResultRow {
   asset_id: string
   asset_key: string
   expected_type: MediaBinding['expectedType']
+  platform: Platform
   telegram_file_id: string | null
   telegram_file_unique_id: string | null
   mime_type: string | null
   file_size: string | null
+  vk_attachment_type: VkAttachmentType | null
+  vk_owner_id: string | number | null
+  vk_media_id: string | number | null
+  vk_access_key: string | null
 }
 
 interface ProductConfigRow extends QueryResultRow {
@@ -608,11 +616,28 @@ function mapRedirect(row: RedirectRow): RedirectRecord {
 }
 
 function mapMedia(row: MediaRow): MediaBinding {
+  if (row.platform === 'vk') {
+    if (!row.vk_attachment_type || row.vk_owner_id === null || row.vk_media_id === null) throw new Error('VK_MEDIA_BINDING_INVALID')
+    return {
+      assetId: row.asset_id,
+      assetKey: row.asset_key,
+      expectedType: row.expected_type,
+      platform: 'vk',
+      attachment: {
+        type: row.vk_attachment_type,
+        ownerId: Number(row.vk_owner_id),
+        mediaId: Number(row.vk_media_id),
+        accessKey: row.vk_access_key ?? undefined,
+      },
+    }
+  }
+  if (!row.telegram_file_id) throw new Error('TELEGRAM_MEDIA_BINDING_INVALID')
   return {
     assetId: row.asset_id,
     assetKey: row.asset_key,
     expectedType: row.expected_type,
-    telegramFileId: row.telegram_file_id ?? undefined,
+    platform: 'telegram',
+    telegramFileId: row.telegram_file_id,
     telegramFileUniqueId: row.telegram_file_unique_id ?? undefined,
     mimeType: row.mime_type ?? undefined,
     fileSize: row.file_size ? Number(row.file_size) : undefined,

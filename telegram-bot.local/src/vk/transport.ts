@@ -1,8 +1,9 @@
 import type { Logger } from 'pino'
 import type { MediaType } from '../core/shared'
-import type { InvoiceSpec, OutgoingButton, RuntimeTransport } from '../domain/types'
+import type { InvoiceSpec, MediaBinding, OutgoingButton, RuntimeTransport } from '../domain/types'
 import { vkCapabilities } from '../runtime/capabilities'
 import type { VkApi } from './api'
+import { formatVkAttachment } from './media-bindings'
 
 export class VkTransport implements RuntimeTransport {
   readonly platform = 'vk' as const
@@ -14,8 +15,10 @@ export class VkTransport implements RuntimeTransport {
     await this.api.sendMessage(recipientId, text, buttons?.length ? JSON.stringify(toVkKeyboard(buttons)) : undefined)
   }
 
-  async sendMedia(_recipientId: string, _type: MediaType, _fileId: string, _caption?: string) {
-    throw new Error('UNSUPPORTED_PLATFORM_CAPABILITY:vk:media')
+  async sendMedia(recipientId: string, type: MediaType, binding: MediaBinding, caption?: string) {
+    if (binding.platform !== 'vk') throw new Error(`MEDIA_BINDING_PLATFORM_MISMATCH:${binding.platform}:vk`)
+    if (!this.capabilities.mediaTypes.includes(type)) throw new Error(`UNSUPPORTED_PLATFORM_CAPABILITY:vk:media:${type}`)
+    await this.api.sendMessage(recipientId, caption ?? '', undefined, formatVkAttachment(binding))
   }
 
   async sendInvoice(_recipientId: string, _invoice: InvoiceSpec) {

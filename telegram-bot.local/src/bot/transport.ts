@@ -1,6 +1,6 @@
 import { InlineKeyboard, InputFile, type Bot } from 'grammy'
 import type { MediaType } from '../core/shared'
-import type { InvoiceSpec, OutgoingButton, RuntimeTransport } from '../domain/types'
+import type { InvoiceSpec, MediaBinding, OutgoingButton, RuntimeTransport } from '../domain/types'
 import { telegramCapabilities } from '../runtime/capabilities'
 
 interface TelegramTransportOptions {
@@ -27,7 +27,9 @@ export class GrammyTransport implements RuntimeTransport {
     } : { link_preview_options: { is_disabled: true } })
   }
 
-  async sendMedia(telegramId: string, type: MediaType, fileId: string, caption?: string) {
+  async sendMedia(telegramId: string, type: MediaType, binding: MediaBinding, caption?: string) {
+    if (binding.platform !== 'telegram') throw new Error(`MEDIA_BINDING_PLATFORM_MISMATCH:${binding.platform}:telegram`)
+    const fileId = binding.telegramFileId
     const options = caption ? { caption } : {}
     if (type === 'image') await this.bot.api.sendPhoto(telegramId, fileId, options)
     else if (type === 'video') await this.bot.api.sendVideo(telegramId, fileId, options)

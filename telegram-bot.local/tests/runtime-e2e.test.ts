@@ -58,8 +58,8 @@ describe('E2E runtime с фальшивым Telegram transport', () => {
         afterPurchaseText: 'Оплата получена.',
       }],
     })
-    store.bindMedia(version.id, { assetId: 'asset_cover', assetKey: 'test_cover', expectedType: 'image', telegramFileId: 'cover-file' })
-    store.bindMedia(version.id, { assetId: 'asset_guide', assetKey: 'personal_guide', expectedType: 'document', telegramFileId: 'guide-file' })
+    store.bindMedia(version.id, { assetId: 'asset_cover', assetKey: 'test_cover', expectedType: 'image', platform: 'telegram', telegramFileId: 'cover-file' })
+    store.bindMedia(version.id, { assetId: 'asset_guide', assetKey: 'personal_guide', expectedType: 'document', platform: 'telegram', telegramFileId: 'guide-file' })
     const transport = new FakeTransport()
     const engine = new FunnelEngine(store, transport, { now: () => new Date('2026-07-28T09:00:00.000Z') })
 

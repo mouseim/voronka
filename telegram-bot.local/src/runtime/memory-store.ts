@@ -59,7 +59,7 @@ export class MemoryRuntimeStore implements RuntimeStore {
   }
 
   bindMedia(versionId: string, binding: MediaBinding) {
-    this.media.set(`${versionId}:${binding.assetId}`, structuredClone(binding))
+    this.media.set(`${versionId}:${binding.assetId}:${binding.platform}`, structuredClone(binding))
   }
 
   async reserveUpdate(platform: Platform, updateId: string) {
@@ -216,8 +216,8 @@ export class MemoryRuntimeStore implements RuntimeStore {
     return structuredClone(redirect)
   }
 
-  async getMediaBinding(versionId: string, assetId: string) {
-    const found = this.media.get(`${versionId}:${assetId}`)
+  async getMediaBinding(versionId: string, assetId: string, platform: Platform) {
+    const found = this.media.get(`${versionId}:${assetId}:${platform}`)
     return found ? structuredClone(found) : null
   }
 

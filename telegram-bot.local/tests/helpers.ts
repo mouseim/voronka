@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect } from 'vitest'
 import { parseAndMigrateFunnelDocument, type FunnelDocument, type MediaType } from '../src/core/shared'
-import type { InvoiceSpec, OutgoingButton, RuntimeTransport, TelegramProfile } from '../src/domain/types'
+import type { InvoiceSpec, MediaBinding, OutgoingButton, RuntimeTransport, TelegramProfile } from '../src/domain/types'
 import { telegramCapabilities } from '../src/runtime/capabilities'
 
 export const profile: TelegramProfile = {
@@ -34,8 +34,9 @@ export class FakeTransport implements RuntimeTransport {
     this.texts.push({ telegramId, text, buttons })
   }
 
-  async sendMedia(telegramId: string, type: MediaType, fileId: string, caption?: string) {
-    this.media.push({ telegramId, type, fileId, caption })
+  async sendMedia(telegramId: string, type: MediaType, binding: MediaBinding, caption?: string) {
+    if (binding.platform !== 'telegram') throw new Error('TEST_EXPECTED_TELEGRAM_BINDING')
+    this.media.push({ telegramId, type, fileId: binding.telegramFileId, caption })
   }
 
   async sendInvoice(telegramId: string, invoice: InvoiceSpec) {

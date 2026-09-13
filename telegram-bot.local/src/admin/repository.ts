@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { QueryResultRow } from 'pg'
 import { validateForRuntime } from '../core/runtime-validation'
 import type { FunnelDocument, MediaType, ValidationIssue } from '../core/shared'
-import type { ProductRuntimeConfig, ProductType, PaymentProviderName } from '../domain/types'
+import type { ProductRuntimeConfig, ProductType, PaymentProviderName, VkMediaAttachment } from '../domain/types'
 import { buildAnalyticsSnapshot } from '../analytics/snapshot'
 import { toCsv } from '../analytics/csv'
 import type { DatabasePool } from '../db/pool'
@@ -59,15 +59,24 @@ export class AdminRepository {
           && oldAsset.key === asset.key
           && oldAsset.type === asset.type
           && oldAsset.logicalRef === asset.logicalRef
+        if (copyBinding && previous.rows[0]) {
+          await client.query(`
+            INSERT INTO version_media_bindings(
+              version_id, asset_id, asset_key, expected_type, platform, resource_id, verified_at,
+              vk_attachment_type, vk_owner_id, vk_media_id, vk_access_key
+            )
+            SELECT $1, asset_id, $3, $4, platform, resource_id, verified_at,
+                   vk_attachment_type, vk_owner_id, vk_media_id, vk_access_key
+            FROM version_media_bindings
+            WHERE version_id = $2 AND asset_id = $5
+            ON CONFLICT (version_id, asset_id, platform) DO NOTHING
+          `, [versionId, previous.rows[0].id, asset.key, asset.type, asset.id])
+        }
         await client.query(`
-          INSERT INTO version_media_bindings(version_id, asset_id, asset_key, expected_type, resource_id, verified_at)
-          SELECT $1, $2, $3, $4,
-                 CASE WHEN $6 THEN resource_id ELSE NULL END,
-                 CASE WHEN $6 THEN verified_at ELSE NULL END
-          FROM (SELECT 1) seed
-          LEFT JOIN version_media_bindings old ON old.version_id = $5 AND old.asset_id = $2
-          ON CONFLICT (version_id, asset_id) DO NOTHING
-        `, [versionId, asset.id, asset.key, asset.type, previous.rows[0]?.id ?? null, Boolean(copyBinding)])
+          INSERT INTO version_media_bindings(version_id, asset_id, asset_key, expected_type, platform)
+          VALUES ($1, $2, $3, $4, 'telegram')
+          ON CONFLICT (version_id, asset_id, platform) DO NOTHING
+        `, [versionId, asset.id, asset.key, asset.type])
       }
       for (const product of document.products) {
         await client.query(`
@@ -116,6 +125,7 @@ export class AdminRepository {
         JOIN LATERAL jsonb_array_elements(fv.raw_document->'assets') asset ON asset->>'id' = b.asset_id
         WHERE b.version_id = $1
           AND COALESCE((asset->>'required')::boolean, false) = true
+          AND b.platform = 'telegram'
           AND b.resource_id IS NULL
       `, [versionId])
       missing.rows.forEach((row) => issues.push({
@@ -210,7 +220,7 @@ export class AdminRepository {
     fileSize?: number
   }, adminTelegramId: string) {
     const expected = await this.pool.query<{ expected_type: MediaType }>(
-      'SELECT expected_type FROM version_media_bindings WHERE version_id = $1 AND asset_id = $2',
+      "SELECT expected_type FROM version_media_bindings WHERE version_id = $1 AND asset_id = $2 AND platform = 'telegram'",
       [versionId, assetId],
     )
     if (!expected.rows[0]) throw new Error('ASSET_NOT_FOUND')
@@ -224,7 +234,7 @@ export class AdminRepository {
       await client.query(`
         UPDATE version_media_bindings
         SET resource_id = $3, verified_at = now(), updated_at = now()
-        WHERE version_id = $1 AND asset_id = $2
+        WHERE version_id = $1 AND asset_id = $2 AND platform = 'telegram'
       `, [versionId, assetId, resource.rows[0]!.id])
       await client.query(`
         INSERT INTO admin_audit_log(admin_telegram_id, action, version_id, details)
@@ -233,12 +243,46 @@ export class AdminRepository {
     })
   }
 
-  async unbindMedia(versionId: string, assetId: string, adminTelegramId: string) {
-    await this.pool.query('UPDATE version_media_bindings SET resource_id = NULL, verified_at = NULL, updated_at = now() WHERE version_id = $1 AND asset_id = $2', [versionId, assetId])
+  async bindVkMedia(versionId: string, assetId: string, attachment: VkMediaAttachment, adminTelegramId: string) {
+    const expected = await this.pool.query<{ asset_key: string; expected_type: MediaType }>(`
+      SELECT asset_key, expected_type
+      FROM version_media_bindings
+      WHERE version_id = $1 AND asset_id = $2 AND platform = 'telegram'
+    `, [versionId, assetId])
+    const asset = expected.rows[0]
+    if (!asset) throw new Error('ASSET_NOT_FOUND')
+    if (vkTypeForMedia(asset.expected_type) !== attachment.type) throw new Error(`MEDIA_TYPE_MISMATCH:${asset.expected_type}`)
+    await this.runtimeStore.transaction(async (client) => {
+      await client.query(`
+        INSERT INTO version_media_bindings(
+          version_id, asset_id, asset_key, expected_type, platform,
+          vk_attachment_type, vk_owner_id, vk_media_id, vk_access_key, verified_at
+        )
+        VALUES ($1, $2, $3, $4, 'vk', $5, $6, $7, $8, now())
+        ON CONFLICT (version_id, asset_id, platform) DO UPDATE SET
+          vk_attachment_type = EXCLUDED.vk_attachment_type,
+          vk_owner_id = EXCLUDED.vk_owner_id,
+          vk_media_id = EXCLUDED.vk_media_id,
+          vk_access_key = EXCLUDED.vk_access_key,
+          verified_at = now(), updated_at = now()
+      `, [versionId, assetId, asset.asset_key, asset.expected_type, attachment.type, attachment.ownerId, attachment.mediaId, attachment.accessKey ?? null])
+      await client.query(`
+        INSERT INTO admin_audit_log(admin_telegram_id, action, version_id, details)
+        VALUES ($1, 'bind_vk_media', $2, $3)
+      `, [adminTelegramId, versionId, JSON.stringify({ assetId, type: attachment.type, ownerId: attachment.ownerId, mediaId: attachment.mediaId })])
+    })
+  }
+
+  async unbindMedia(versionId: string, assetId: string, adminTelegramId: string, platform: 'telegram' | 'vk' = 'telegram') {
+    if (platform === 'vk') {
+      await this.pool.query("DELETE FROM version_media_bindings WHERE version_id = $1 AND asset_id = $2 AND platform = 'vk'", [versionId, assetId])
+    } else {
+      await this.pool.query("UPDATE version_media_bindings SET resource_id = NULL, verified_at = NULL, updated_at = now() WHERE version_id = $1 AND asset_id = $2 AND platform = 'telegram'", [versionId, assetId])
+    }
     await this.pool.query(`
       INSERT INTO admin_audit_log(admin_telegram_id, action, version_id, details)
       VALUES ($1, 'unbind_media', $2, $3)
-    `, [adminTelegramId, versionId, JSON.stringify({ assetId })])
+    `, [adminTelegramId, versionId, JSON.stringify({ assetId, platform })])
   }
 
   async listFunnels() {
@@ -261,7 +305,7 @@ export class AdminRepository {
     const result = await this.pool.query<VersionListRow>(`
       SELECT fv.id, fv.version, fv.status, fv.content_hash, fv.imported_at, fv.published_at,
              count(DISTINCT s.id) FILTER (WHERE s.status IN ('active', 'waiting'))::int AS active_sessions,
-             count(DISTINCT b.asset_id) FILTER (WHERE b.resource_id IS NULL)::int AS missing_media
+             count(DISTINCT b.asset_id) FILTER (WHERE b.platform = 'telegram' AND b.resource_id IS NULL)::int AS missing_media
       FROM funnel_versions fv
       LEFT JOIN sessions s ON s.version_id = fv.id
       LEFT JOIN version_media_bindings b ON b.version_id = fv.id
@@ -286,12 +330,18 @@ export class AdminRepository {
 
   async listMedia(versionId: string) {
     const result = await this.pool.query<MediaListRow>(`
-      SELECT b.asset_id, b.asset_key, b.expected_type, b.resource_id IS NOT NULL AS bound,
-             r.telegram_file_id, r.file_size, r.mime_type
-      FROM version_media_bindings b
-      LEFT JOIN media_resources r ON r.id = b.resource_id
-      WHERE b.version_id = $1
-      ORDER BY b.asset_key
+      SELECT tg.asset_id, tg.asset_key, tg.expected_type,
+             tg.resource_id IS NOT NULL AS bound,
+             tg.resource_id IS NOT NULL AS telegram_bound,
+             vk.vk_media_id IS NOT NULL AS vk_bound,
+             r.telegram_file_id, r.file_size, r.mime_type,
+             vk.vk_attachment_type, vk.vk_owner_id, vk.vk_media_id, vk.vk_access_key
+      FROM version_media_bindings tg
+      LEFT JOIN media_resources r ON r.id = tg.resource_id
+      LEFT JOIN version_media_bindings vk
+        ON vk.version_id = tg.version_id AND vk.asset_id = tg.asset_id AND vk.platform = 'vk'
+      WHERE tg.version_id = $1 AND tg.platform = 'telegram'
+      ORDER BY tg.asset_key
     `, [versionId])
     return result.rows
   }
@@ -508,9 +558,23 @@ interface MediaListRow extends QueryResultRow {
   asset_key: string
   expected_type: MediaType
   bound: boolean
+  telegram_bound: boolean
+  vk_bound: boolean
   telegram_file_id: string | null
   file_size: string | null
   mime_type: string | null
+  vk_attachment_type: string | null
+  vk_owner_id: string | null
+  vk_media_id: string | null
+  vk_access_key: string | null
+}
+
+function vkTypeForMedia(type: MediaType) {
+  if (type === 'image') return 'photo'
+  if (type === 'video') return 'video'
+  if (type === 'voice') return 'audio_message'
+  if (type === 'document') return 'doc'
+  return null
 }
 
 interface ProductConfigRow extends QueryResultRow {

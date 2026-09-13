@@ -35,7 +35,7 @@ export interface RuntimeStore {
   consumeCallback(token: string, userId: string): Promise<CallbackRecord | null>
   createRedirect(userId: string, sessionId: string, targetUrl: string, continueAfterClick: boolean, ttlSeconds?: number): Promise<string>
   consumeRedirect(token: string): Promise<RedirectRecord | null>
-  getMediaBinding(versionId: string, assetId: string): Promise<MediaBinding | null>
+  getMediaBinding(versionId: string, assetId: string, platform: Platform): Promise<MediaBinding | null>
   getProductConfig(versionId: string, productId: string): Promise<ProductRuntimeConfig | null>
   scheduleJob(job: Omit<DurableJob, 'id' | 'attempts'>): Promise<void>
   cancelSessionJobs(sessionId: string, types?: DurableJob['type'][]): Promise<number>

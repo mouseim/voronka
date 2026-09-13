@@ -16,6 +16,7 @@ import { VkApiClient } from './vk/api'
 import { VkLongPollRunner } from './vk/long-poll'
 import { VkTransport } from './vk/transport'
 import { VkUpdateAdapter } from './vk/updates'
+import { VkMediaBindingService } from './vk/media-bindings'
 
 const config = loadConfig()
 const logger = pino({
@@ -38,11 +39,12 @@ const engine = new FunnelEngine(store, transport, {
 })
 const vkRuntime = config.vk ? createVkRuntime(config.vk) : null
 const adminRepository = new AdminRepository(pool, store)
+const vkMedia = vkRuntime ? new VkMediaBindingService(adminRepository, vkRuntime.api) : undefined
 createTelegramBot(
   bot,
   store,
   engine,
-  (targetBot) => new AdminController(targetBot, adminRepository, config, logger),
+  (targetBot) => new AdminController(targetBot, adminRepository, config, logger, vkMedia),
   logger,
 )
 const worker = createJobWorker(store, {
@@ -123,5 +125,5 @@ function createVkRuntime(vk: NonNullable<typeof config.vk>) {
   const vkTransport = new VkTransport(api, logger)
   const vkEngine = new FunnelEngine(store, vkTransport, { publicBaseUrl: config.publicBaseUrl })
   const adapter = new VkUpdateAdapter(store, vkEngine, api, logger)
-  return { engine: vkEngine, longPoll: new VkLongPollRunner(api, adapter, logger) }
+  return { api, engine: vkEngine, longPoll: new VkLongPollRunner(api, adapter, logger) }
 }

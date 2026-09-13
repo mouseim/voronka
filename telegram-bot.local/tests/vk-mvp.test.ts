@@ -119,11 +119,11 @@ describe('VK MVP', () => {
 })
 
 class FakeVkApi implements VkApi {
-  readonly messages: Array<{ peerId: string; message: string; keyboard?: string }> = []
+  readonly messages: Array<{ peerId: string; message: string; keyboard?: string; attachment?: string }> = []
   readonly answers: Array<{ eventId: string; userId: string; peerId: string }> = []
 
-  async sendMessage(peerId: string, message: string, keyboard?: string) {
-    this.messages.push({ peerId, message, keyboard })
+  async sendMessage(peerId: string, message: string, keyboard?: string, attachment?: string) {
+    this.messages.push({ peerId, message, keyboard, attachment })
     return this.messages.length
   }
 
@@ -134,6 +134,11 @@ class FakeVkApi implements VkApi {
   async answerMessageEvent(eventId: string, userId: string, peerId: string) {
     this.answers.push({ eventId, userId, peerId })
   }
+
+  async getMessagesPhotoUploadServer() { return { upload_url: 'https://upload.example/photo' } }
+  async saveMessagesPhoto() { return [] }
+  async getMessagesDocumentUploadServer() { return { upload_url: 'https://upload.example/doc' } }
+  async saveDocument() { return { type: 'doc' } }
 }
 
 function vkRuntime(document: FunnelDocument) {

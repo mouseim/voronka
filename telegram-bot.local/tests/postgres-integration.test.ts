@@ -10,6 +10,37 @@ import { PostgresRuntimeStore } from '../src/db/postgres-store'
 import { loadDemo, profile } from './helpers'
 
 describe('PostgreSQL import/publish/version integration', () => {
+  it('migration 004 сохраняет существующий Telegram media binding', async () => {
+    const database = await PGlite.create({ extensions: { pgcrypto } })
+    const pool = pglitePool(database)
+    try {
+      await applyMigration(database, '001_initial.sql')
+      await applyMigration(database, '002_submission_idempotency.sql')
+      await applyMigration(database, '003_platform_identity.sql')
+      const funnel = await database.query<{ id: string }>(`
+        INSERT INTO funnels(funnel_key, source_funnel_id, name) VALUES ('legacy', 'legacy-source', 'Legacy') RETURNING id
+      `)
+      const version = await database.query<{ id: string }>(`
+        INSERT INTO funnel_versions(funnel_id, version, schema_version, status, content_hash, raw_document)
+        VALUES ($1, 1, '3.0', 'draft', 'legacy-hash', '{}'::jsonb) RETURNING id
+      `, [funnel.rows[0]!.id])
+      const resource = await database.query<{ id: string }>(`
+        INSERT INTO media_resources(telegram_file_id, media_type) VALUES ('legacy-file', 'image') RETURNING id
+      `)
+      await database.query(`
+        INSERT INTO version_media_bindings(version_id, asset_id, asset_key, expected_type, resource_id)
+        VALUES ($1, 'legacy-asset', 'legacy', 'image', $2)
+      `, [version.rows[0]!.id, resource.rows[0]!.id])
+
+      await applyMigration(database, '004_platform_media_bindings.sql')
+
+      const binding = await new PostgresRuntimeStore(pool).getMediaBinding(version.rows[0]!.id, 'legacy-asset', 'telegram')
+      expect(binding).toMatchObject({ platform: 'telegram', telegramFileId: 'legacy-file' })
+    } finally {
+      await database.close()
+    }
+  })
+
   it('хранит одинаковые external ID Telegram и VK как разные identities', async () => {
     const database = await PGlite.create({ extensions: { pgcrypto } })
     const pool = pglitePool(database)
@@ -40,6 +71,12 @@ describe('PostgreSQL import/publish/version integration', () => {
       const v1Document = await loadDemo()
       const v1 = await admin.importDocument(v1Document, '1')
       await configureAndBind(admin, v1.versionId, v1Document)
+      const sharedAsset = v1Document.assets[0]!
+      await admin.bindVkMedia(v1.versionId, sharedAsset.id, {
+        type: sharedAsset.type === 'image' ? 'photo' : 'doc',
+        ownerId: -10,
+        mediaId: 77,
+      }, '1')
       expect((await admin.publish(v1.versionId, '1')).published).toBe(true)
       await admin.setDefault(v1.funnelId, '1')
 
@@ -60,6 +97,8 @@ describe('PostgreSQL import/publish/version integration', () => {
       v2Document.funnel.updatedAt = new Date().toISOString()
       const v2 = await admin.importDocument(v2Document, '1')
       expect((await admin.listMedia(v2.versionId)).every((media) => media.bound)).toBe(true)
+      expect(await store.getMediaBinding(v2.versionId, sharedAsset.id, 'telegram')).toMatchObject({ platform: 'telegram' })
+      expect(await store.getMediaBinding(v2.versionId, sharedAsset.id, 'vk')).toMatchObject({ platform: 'vk', attachment: { mediaId: 77 } })
       await configureProducts(admin, v2.versionId, v2Document)
       expect((await admin.publish(v2.versionId, '1')).published).toBe(true)
 

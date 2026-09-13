@@ -17,6 +17,7 @@ const environmentSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
   HOST: z.string().default('0.0.0.0'),
   MAX_FUNNEL_BYTES: z.coerce.number().int().positive().default(5 * 1024 * 1024),
+  MAX_MEDIA_BYTES: z.coerce.number().int().positive().default(50 * 1024 * 1024),
   WORKER_POLL_MS: z.coerce.number().int().min(250).default(1000),
 })
 
@@ -63,6 +64,7 @@ export function loadConfig(source: NodeJS.ProcessEnv = process.env) {
     port: raw.PORT,
     host: raw.HOST,
     maxFunnelBytes: raw.MAX_FUNNEL_BYTES,
+    maxMediaBytes: raw.MAX_MEDIA_BYTES,
     workerPollMs: raw.WORKER_POLL_MS,
   }
 }

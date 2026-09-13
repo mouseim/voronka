@@ -6,6 +6,7 @@ export const telegramCapabilities: PlatformCapabilities = {
   buttons: true,
   urlButtons: true,
   media: true,
+  mediaTypes: ['image', 'video', 'audio', 'voice', 'video_note', 'document', 'animation'],
   payments: true,
 }
 
@@ -13,7 +14,8 @@ export const vkCapabilities: PlatformCapabilities = {
   text: true,
   buttons: true,
   urlButtons: true,
-  media: false,
+  media: true,
+  mediaTypes: ['image', 'video', 'voice', 'document'],
   payments: false,
 }
 
@@ -29,7 +31,10 @@ export function unsupportedReachableCapability(document: FunnelDocument, capabil
 
   for (const node of document.nodes.filter((item) => reachable.has(item.id))) {
     if (!capabilities.text && node.type !== 'start') return `text:${node.id}`
-    if (node.type === 'media' && (node.data as MediaData).required && !capabilities.media) return `media:${node.id}`
+    if (node.type === 'media' && (node.data as MediaData).required) {
+      const asset = document.assets.find((item) => item.id === (node.data as MediaData).assetId)
+      if (!capabilities.media || (asset && !capabilities.mediaTypes.includes(asset.type))) return `media:${asset?.type ?? 'unknown'}:${node.id}`
+    }
     if (node.type === 'product' && !capabilities.payments) return `payments:${node.id}`
     if (node.type === 'external_link' && !capabilities.urlButtons) return `url_buttons:${node.id}`
     if (node.type === 'message') {

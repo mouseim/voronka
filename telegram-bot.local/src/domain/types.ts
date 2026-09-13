@@ -127,15 +127,36 @@ export interface ProductRuntimeConfig {
   afterPurchaseText: string
 }
 
-export interface MediaBinding {
+interface BaseMediaBinding {
   assetId: string
   assetKey: string
   expectedType: MediaType
-  telegramFileId?: string
+  platform: Platform
+}
+
+export interface TelegramMediaBinding extends BaseMediaBinding {
+  platform: 'telegram'
+  telegramFileId: string
   telegramFileUniqueId?: string
   mimeType?: string
   fileSize?: number
 }
+
+export type VkAttachmentType = 'photo' | 'video' | 'doc' | 'audio_message'
+
+export interface VkMediaAttachment {
+  type: VkAttachmentType
+  ownerId: number
+  mediaId: number
+  accessKey?: string
+}
+
+export interface VkMediaBinding extends BaseMediaBinding {
+  platform: 'vk'
+  attachment: VkMediaAttachment
+}
+
+export type MediaBinding = TelegramMediaBinding | VkMediaBinding
 
 export interface PaymentRecord {
   id: string
@@ -195,7 +216,7 @@ export interface RuntimeTransport {
   readonly platform: Platform
   readonly capabilities: PlatformCapabilities
   sendText(recipientId: string, text: string, buttons?: OutgoingButton[][]): Promise<void>
-  sendMedia(recipientId: string, type: MediaType, fileId: string, caption?: string): Promise<void>
+  sendMedia(recipientId: string, type: MediaType, binding: MediaBinding, caption?: string): Promise<void>
   sendInvoice(recipientId: string, invoice: InvoiceSpec): Promise<void>
   sendDocument(recipientId: string, filename: string, content: Buffer, caption?: string): Promise<void>
   notifyAdministrators(text: string): Promise<void>
@@ -206,5 +227,6 @@ export interface PlatformCapabilities {
   buttons: boolean
   urlButtons: boolean
   media: boolean
+  mediaTypes: readonly MediaType[]
   payments: boolean
 }

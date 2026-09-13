@@ -530,7 +530,8 @@ export class FunnelEngine {
 
   private async sendNodeMedia(user: RuntimeUser, session: RuntimeSession, version: FunnelVersionRecord, node: FunnelNode) {
     const data = node.data as MediaData
-    if (!this.transport.capabilities.media) {
+    const asset = version.document.assets.find((item) => item.id === data.assetId)
+    if (!this.transport.capabilities.media || (asset && !this.transport.capabilities.mediaTypes.includes(asset.type))) {
       if (data.required) throw new Error(`UNSUPPORTED_PLATFORM_CAPABILITY:${this.transport.platform}:media:${node.id}`)
       await this.event(session, 'media_missing', { assetId: data.assetId, optional: true, platform: this.transport.platform }, `media_unsupported:${node.id}:${session.revision}`)
       return
@@ -545,10 +546,10 @@ export class FunnelEngine {
   private async sendAsset(user: RuntimeUser, session: RuntimeSession, version: FunnelVersionRecord, assetId: string, caption = '', requiredOverride?: boolean) {
     const asset = version.document.assets.find((item) => item.id === assetId)
     if (!asset) return
-    const binding = await this.store.getMediaBinding(version.id, assetId)
-    if (binding?.telegramFileId) {
+    const binding = await this.store.getMediaBinding(version.id, assetId, this.transport.platform)
+    if (binding) {
       const captionChars = Array.from(caption)
-      await this.transport.sendMedia(user.externalUserId, asset.type, binding.telegramFileId, captionChars.slice(0, 1024).join(''))
+      await this.transport.sendMedia(user.externalUserId, asset.type, binding, captionChars.slice(0, 1024).join(''))
       if (captionChars.length > 1024) await this.sendText(user.externalUserId, captionChars.slice(1024).join(''))
       await this.event(session, 'media_sent', { assetId, type: asset.type }, `media:${assetId}:${session.revision}`)
       return

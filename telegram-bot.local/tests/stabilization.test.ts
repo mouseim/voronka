@@ -167,7 +167,7 @@ async function productScenario(repeatPolicy: ProductRuntimeConfig['repeatPolicy'
       afterPurchaseText: 'Оплата получена.',
     }],
   })
-  store.bindMedia(version.id, { assetId: asset.id, assetKey: asset.key, expectedType: asset.type, telegramFileId: 'guide-file' })
+  store.bindMedia(version.id, { assetId: asset.id, assetKey: asset.key, expectedType: asset.type, platform: 'telegram', telegramFileId: 'guide-file' })
   const transport = new FakeTransport()
   const engine = new FunnelEngine(store, transport)
   return { store, transport, engine }

@@ -5,10 +5,20 @@ export interface VkLongPollServer {
 }
 
 export interface VkApi {
-  sendMessage(peerId: string, message: string, keyboard?: string): Promise<number>
+  sendMessage(peerId: string, message: string, keyboard?: string, attachment?: string): Promise<number>
   getLongPollServer(): Promise<VkLongPollServer>
   answerMessageEvent(eventId: string, userId: string, peerId: string): Promise<void>
+  getMessagesPhotoUploadServer(peerId: string): Promise<VkUploadServer>
+  saveMessagesPhoto(upload: VkPhotoUploadResult): Promise<VkSavedPhoto[]>
+  getMessagesDocumentUploadServer(peerId: string, type: 'doc' | 'audio_message'): Promise<VkUploadServer>
+  saveDocument(file: string, title?: string): Promise<VkSavedDocument>
 }
+
+export interface VkUploadServer { upload_url: string }
+export interface VkPhotoUploadResult { server: number; photo: string; hash: string }
+export interface VkSavedAttachmentIdentity { id: number; owner_id: number; access_key?: string }
+export type VkSavedPhoto = VkSavedAttachmentIdentity
+export interface VkSavedDocument { type: string; doc?: VkSavedAttachmentIdentity; audio_message?: VkSavedAttachmentIdentity }
 
 export class VkApiClient implements VkApi {
   constructor(
@@ -19,12 +29,13 @@ export class VkApiClient implements VkApi {
     private readonly randomId: () => number = vkRandomId,
   ) {}
 
-  async sendMessage(peerId: string, message: string, keyboard?: string) {
+  async sendMessage(peerId: string, message: string, keyboard?: string, attachment?: string) {
     return this.request<number>('messages.send', {
       peer_id: peerId,
       random_id: this.randomId(),
       message,
       ...(keyboard ? { keyboard } : {}),
+      ...(attachment ? { attachment } : {}),
     })
   }
 
@@ -39,6 +50,26 @@ export class VkApiClient implements VkApi {
       peer_id: peerId,
       event_data: '{}',
     })
+  }
+
+  async getMessagesPhotoUploadServer(peerId: string) {
+    return this.request<VkUploadServer>('photos.getMessagesUploadServer', { peer_id: peerId })
+  }
+
+  async saveMessagesPhoto(upload: VkPhotoUploadResult) {
+    return this.request<VkSavedPhoto[]>('photos.saveMessagesPhoto', {
+      server: upload.server,
+      photo: upload.photo,
+      hash: upload.hash,
+    })
+  }
+
+  async getMessagesDocumentUploadServer(peerId: string, type: 'doc' | 'audio_message') {
+    return this.request<VkUploadServer>('docs.getMessagesUploadServer', { peer_id: peerId, type })
+  }
+
+  async saveDocument(file: string, title?: string) {
+    return this.request<VkSavedDocument>('docs.save', { file, ...(title ? { title } : {}) })
   }
 
   private async request<T>(method: string, parameters: Record<string, string | number>) {
