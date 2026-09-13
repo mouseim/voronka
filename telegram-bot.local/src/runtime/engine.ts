@@ -124,7 +124,21 @@ export class FunnelEngine {
   async stop(profile: TelegramProfile): Promise<void> {
     const user = await this.store.upsertUser(profile)
     const resolved = await this.store.resolveVersion()
-    const document = resolved?.version.document
+    await this.stopUser(user, resolved?.version.document)
+  }
+
+  async handleOptOutCommand(profile: TelegramProfile, text: string): Promise<boolean> {
+    const existingUser = await this.store.getUserByTelegramId(profile.telegramId)
+    const session = existingUser ? await this.store.findAnyActiveSession(existingUser.id) : null
+    const version = session ? await this.requireVersion(session.versionId) : (await this.store.resolveVersion())?.version
+    const configured = normalizeTelegramCommand(version?.document.bot.optOut.command) ?? '/stop'
+    if (normalizeTelegramCommand(text) !== configured) return false
+    const user = existingUser ?? await this.store.upsertUser(profile)
+    await this.stopUser(user, version?.document)
+    return true
+  }
+
+  private async stopUser(user: RuntimeUser, document?: FunnelDocument): Promise<void> {
     await this.store.setOptOut(user.id, true, document?.bot.optOut.blockBackground ?? true)
     const sessionIds = await this.store.stopUserSessions(user.id)
     await Promise.all(sessionIds.map((sessionId) => this.store.cancelSessionJobs(sessionId)))
@@ -185,7 +199,9 @@ export class FunnelEngine {
       await this.transport.sendText(user.telegramId, 'Эта кнопка относится к предыдущему этапу и больше не действует.')
       return false
     }
-    await this.store.cancelSessionJobs(session.id, ['reminder'])
+    if (version.document.bot.reminders.cancelAfterContinue) {
+      await this.store.cancelSessionJobs(session.id, ['reminder'])
+    }
 
     if (action.type === 'advance') {
       if (action.handle === '__resume') return this.run(user, session).then(() => true)
@@ -273,7 +289,9 @@ export class FunnelEngine {
       return false
     }
     const version = await this.requireVersion(session.versionId)
-    await this.store.cancelSessionJobs(session.id, ['reminder'])
+    if (version.document.bot.reminders.cancelAfterContinue) {
+      await this.store.cancelSessionJobs(session.id, ['reminder'])
+    }
     if (session.state.testRun) return this.handleTestText(user, session, version, text)
     if (session.state.formRun) return this.handleFormText(user, session, version, text)
     await this.transport.sendText(user.telegramId, 'Используйте кнопки под последним сообщением.')
@@ -823,10 +841,16 @@ export class FunnelEngine {
       await this.save(session)
       return
     }
-    if (await this.store.hasPurchase(user.id, version.id, product.id)) {
-      const config = await this.store.getProductConfig(version.id, product.id)
-      await this.sendText(user.telegramId, 'Вы уже покупали этот материал. Отправляю его повторно.')
-      if (config) await this.deliverConfiguredAssets(user, session, version, config, null, false)
+    const alreadyPurchased = await this.store.hasPurchase(user.id, version.id, product.id)
+    const config = alreadyPurchased ? await this.store.getProductConfig(version.id, product.id) : null
+    const repeatPolicy = config?.repeatPolicy ?? 'redeliver'
+    if (alreadyPurchased && repeatPolicy !== 'repurchase') {
+      if (repeatPolicy === 'redeliver') {
+        await this.sendText(user.telegramId, 'Вы уже покупали этот материал. Отправляю его повторно.')
+        if (config) await this.deliverConfiguredAssets(user, session, version, config, null, false)
+      } else {
+        await this.sendText(user.telegramId, 'Вы уже покупали этот материал. Повторная покупка отключена.')
+      }
       const advanced = await this.advanceAndSave(session, version.document, node.id, 'already_purchased')
       await this.run(user, advanced)
       return
@@ -863,12 +887,20 @@ export class FunnelEngine {
       await this.transport.sendText(user.telegramId, text)
       return
     }
-    if (await this.store.hasPurchase(user.id, version.id, productId)) {
-      await this.deliverConfiguredAssets(user, session, version, config, null, false)
+    const alreadyPurchased = await this.store.hasPurchase(user.id, version.id, productId)
+    if (alreadyPurchased && config.repeatPolicy !== 'repurchase') {
+      if (config.repeatPolicy === 'redeliver') {
+        await this.deliverConfiguredAssets(user, session, version, config, null, false)
+      }
+      const node = this.requireCurrentNode(version.document, session)
+      const advanced = await this.advanceAndSave(session, version.document, node.id, 'already_purchased')
+      await this.run(user, advanced)
       return
     }
     const payment = await this.store.createPayment({
-      idempotencyKey: `${session.id}:${session.currentNodeId}:${productId}`,
+      idempotencyKey: alreadyPurchased
+        ? `${session.id}:${session.currentNodeId}:${productId}:${randomBytes(8).toString('base64url')}`
+        : `${session.id}:${session.currentNodeId}:${productId}`,
       userId: user.id,
       sessionId: session.id,
       versionId: version.id,
@@ -914,7 +946,11 @@ export class FunnelEngine {
       await this.sendText(user.telegramId, this.render(version.document, session, config.afterPurchaseText || version.document.products.find((item) => item.id === payment.productId)?.afterPurchaseText || 'Спасибо за покупку!'))
       await this.event(session, 'payment_succeeded', { paymentId: payment.id, productId: payment.productId, amountMinor: payment.amountMinor, currency: payment.currency }, `payment_success:${payment.id}`)
     }
-    await this.deliverConfiguredAssets(user, session, version, config, purchase.purchaseId, true)
+    if (purchase.created || config.repeatPolicy !== 'repurchase') {
+      await this.deliverConfiguredAssets(user, session, version, config, purchase.purchaseId, true)
+    } else if (paid.firstSuccess) {
+      await this.deliverConfiguredAssets(user, session, version, config, null, false)
+    }
     const node = session.currentNodeId ? version.document.nodes.find((item) => item.id === session.currentNodeId) : undefined
     if (node?.type === 'product' && (node.data as ProductBlockData).productId === payment.productId) {
       const advanced = await this.advanceAndSave(session, version.document, node.id, 'paid')
@@ -938,9 +974,12 @@ export class FunnelEngine {
     const data = node.data as ExternalLinkData
     const url = await this.safeActionUrl(user, session, data.url, Boolean(data.continueAfterClick))
     const rows: OutgoingButton[][] = [[{ text: this.render(document, session, data.buttonText), url }]]
-    if (!this.options.publicBaseUrl) {
+    if (!this.options.publicBaseUrl || !data.continueAfterClick) {
       rows.push([{ text: 'Продолжить', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: node.id, handle: 'next' }) }])
-      await this.sendText(user.telegramId, `${this.render(document, session, data.text)}\n\nЛокальный режим: Telegram не сообщает о клике по ссылке, поэтому после просмотра нажмите «Продолжить».`, rows)
+      const suffix = !this.options.publicBaseUrl
+        ? '\n\nЛокальный режим: Telegram не сообщает о клике по ссылке, поэтому после просмотра нажмите «Продолжить».'
+        : '\n\nПосле просмотра нажмите «Продолжить».'
+      await this.sendText(user.telegramId, `${this.render(document, session, data.text)}${suffix}`, rows)
       return
     }
     await this.sendText(user.telegramId, this.render(document, session, data.text), rows)
@@ -1080,4 +1119,11 @@ export class FunnelEngine {
       occurredAt: this.now().toISOString(),
     })
   }
+}
+
+function normalizeTelegramCommand(value: string | undefined): string | null {
+  const token = value?.trim().split(/\s+/, 1)[0]?.split('@', 1)[0]?.toLowerCase()
+  if (!token) return null
+  const command = token.startsWith('/') ? token : `/${token}`
+  return /^\/[a-z0-9_]+$/.test(command) ? command : null
 }

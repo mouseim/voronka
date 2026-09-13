@@ -77,7 +77,11 @@ export function createTelegramBot(
   })
 
   bot.on('message:text', async (ctx) => {
-    if (!ctx.from || ctx.message.text.startsWith('/')) return
+    if (!ctx.from) return
+    if (ctx.message.text.startsWith('/')) {
+      await engine.handleOptOutCommand(toProfile(ctx.from), ctx.message.text)
+      return
+    }
     await engine.handleText(toProfile(ctx.from), ctx.message.text)
   })
 
