@@ -4,8 +4,8 @@ import type { WorkspaceSection } from './components/Workspace'
 import { freshDemoFunnel } from './model/demo'
 import { createEmptyFunnel, duplicateFunnel } from './model/funnel'
 import type { DraftSummary, FunnelDocument } from './model/types'
-import { deleteDraft, documentsMatchForSync, getDrafts, saveDraft, saveRevision } from './services/drafts'
-import { getServerFunnel, getServerFunnels, integrationConnection, setIntegrationConnection, type ServerFunnelSummary } from './services/integrations'
+import { archiveFunnelDrafts, documentsMatchForSync, getDrafts, saveDraft, saveRevision } from './services/drafts'
+import { archiveServerFunnel, getServerFunnel, getServerFunnels, integrationConnection, setIntegrationConnection, type ServerFunnelSummary } from './services/integrations'
 import { useEditorStore } from './store/editor'
 
 const Editor = lazy(() => import('./components/Editor').then((module) => ({ default: module.Editor })))
@@ -92,10 +92,19 @@ export default function App() {
   }
   const demo = () => open(freshDemoFunnel())
   const duplicate = async (source: FunnelDocument) => { const next = duplicateFunnel(source); await persist(next); open(next) }
-  const remove = async (draft: DraftSummary) => {
-    if (!window.confirm(`Удалить черновик «${draft.name}»? Это действие нельзя отменить.`)) return
-    await deleteDraft(draft.id)
-    await refresh()
+  const archive = async (target: { funnelId: string; name: string; onServer: boolean }) => {
+    const explanation = target.onServer
+      ? 'Она исчезнет из списка, но версии, статистика, платежи и активные прохождения сохранятся.'
+      : 'Она исчезнет из списка, но останется в локальном архиве этого браузера.'
+    if (!window.confirm(`Удалить воронку «${target.name}»?\n\n${explanation}`)) return
+    try {
+      if (target.onServer) await archiveServerFunnel(target.funnelId)
+      await archiveFunnelDrafts(target.funnelId)
+      await Promise.all([refresh(), refreshServer()])
+    } catch (error) {
+      setSyncState('error')
+      setSyncMessage(error instanceof Error ? error.message : 'Не удалось переместить воронку в архив.')
+    }
   }
   const importSave = async (source: FunnelDocument) => {
     const collision = drafts.some((draft) => draft.document.funnel.id === source.funnel.id && draft.version === source.funnel.version)
@@ -148,7 +157,7 @@ export default function App() {
     onRefreshServer: refreshServer,
     onImportSave: importSave,
     onDuplicate: duplicate,
-    onDelete: remove,
+    onArchive: archive,
     onAnalytics: (next: FunnelDocument) => open(next, '/analytics'),
   }
 

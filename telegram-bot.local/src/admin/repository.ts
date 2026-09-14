@@ -42,7 +42,7 @@ export class AdminRepository {
           RETURNING id
         `, [document.funnel.key, document.funnel.id, document.funnel.name])
       } else {
-        await client.query('UPDATE funnels SET name = $2, updated_at = now() WHERE id = $1', [funnel.rows[0].id, document.funnel.name])
+        await client.query('UPDATE funnels SET name = $2, updated_at = now(), archived_at = NULL WHERE id = $1', [funnel.rows[0].id, document.funnel.name])
       }
       const funnelId = funnel.rows[0]!.id
       let candidate = document
@@ -370,7 +370,7 @@ export class AdminRepository {
              jsonb_array_length(fv.raw_document->'nodes')::int AS node_count
       FROM funnels f
       JOIN funnel_versions fv ON fv.id = f.active_version_id
-      WHERE fv.status = 'published'
+      WHERE fv.status = 'published' AND f.archived_at IS NULL
       ORDER BY f.updated_at DESC
     `)
     return result.rows.map((row) => ({
@@ -389,7 +389,7 @@ export class AdminRepository {
       SELECT fv.raw_document, fv.version
       FROM funnels f
       JOIN funnel_versions fv ON fv.id = f.active_version_id
-      WHERE f.source_funnel_id = $1 AND fv.status = 'published'
+      WHERE f.source_funnel_id = $1 AND fv.status = 'published' AND f.archived_at IS NULL
     `, [sourceFunnelId])
     const row = result.rows[0]
     if (!row) return null
@@ -398,6 +398,47 @@ export class AdminRepository {
     document.funnel.status = 'published'
     document.analytics = emptyAnalytics(row.version)
     return document
+  }
+
+  async archiveEditorFunnel(sourceFunnelId: string, adminTelegramId: string) {
+    return this.runtimeStore.transaction(async (client) => {
+      const result = await client.query<{ id: string; default_for_bot: boolean }>(`
+        SELECT id, default_for_bot
+        FROM funnels
+        WHERE source_funnel_id = $1 AND archived_at IS NULL
+        FOR UPDATE
+      `, [sourceFunnelId])
+      const funnel = result.rows[0]
+      if (!funnel) return null
+
+      await client.query(`
+        UPDATE funnels
+        SET archived_at = now(), default_for_bot = false, updated_at = now()
+        WHERE id = $1
+      `, [funnel.id])
+
+      let replacementSourceId: string | null = null
+      if (funnel.default_for_bot) {
+        const replacement = await client.query<{ id: string; source_funnel_id: string }>(`
+          SELECT id, source_funnel_id
+          FROM funnels
+          WHERE archived_at IS NULL AND active_version_id IS NOT NULL AND id <> $1
+          ORDER BY updated_at DESC
+          LIMIT 1
+          FOR UPDATE
+        `, [funnel.id])
+        if (replacement.rows[0]) {
+          await client.query('UPDATE funnels SET default_for_bot = true WHERE id = $1', [replacement.rows[0].id])
+          replacementSourceId = replacement.rows[0].source_funnel_id
+        }
+      }
+
+      await client.query(`
+        INSERT INTO admin_audit_log(admin_telegram_id, action, funnel_id, details)
+        VALUES ($1, 'archive_funnel', $2, $3)
+      `, [adminTelegramId, funnel.id, JSON.stringify({ replacementSourceId })])
+      return { archived: true as const, replacementSourceId }
+    })
   }
 
   async listVersions(funnelId: string) {

@@ -98,11 +98,12 @@ test('чистый браузер загружает VPS-воронку, сох�
   let serverDocument = freshDemoFunnel()
   serverDocument.funnel.status = 'published'
   let publishCount = 0
+  let archived = false
   await page.route('https://runtime.example/**', async (route) => {
     const request = route.request()
     const url = new URL(request.url())
     if (request.method() === 'GET' && url.pathname === '/admin/editor/funnels') {
-      return route.fulfill({ json: { funnels: [{
+      return route.fulfill({ json: { funnels: archived ? [] : [{
         id: serverDocument.funnel.id,
         name: serverDocument.funnel.name,
         activeVersion: serverDocument.funnel.version,
@@ -128,6 +129,10 @@ test('чистый браузер загружает VPS-воронку, сох�
         document: serverDocument,
         issues: [],
       } })
+    }
+    if (request.method() === 'DELETE' && url.pathname.startsWith('/admin/editor/funnels/')) {
+      archived = true
+      return route.fulfill({ json: { archived: true, replacementSourceId: null } })
     }
     return route.fulfill({ status: 404, json: { message: 'Не найдено' } })
   })
@@ -168,6 +173,7 @@ test('чистый браузер загружает VPS-воронку, сох�
   expect(publishCount).toBe(2)
 
   await page.reload()
+  await expect(page.locator('.draft-card')).toHaveCount(1)
   await expect(page.locator('.draft-card').getByText('Опубликовано со второго устройства', { exact: true })).toBeVisible()
   const stored = await page.evaluate(async () => new Promise<number>((resolve, reject) => {
     const open = indexedDB.open('voronka-funnel-builder', 2)
@@ -179,4 +185,8 @@ test('чистый браузер загружает VPS-воронку, сох�
     }
   }))
   expect(stored).toBeGreaterThan(0)
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Удалить воронку' }).click()
+  await expect(page.locator('.draft-card')).toHaveCount(0)
+  expect(archived).toBe(true)
 })

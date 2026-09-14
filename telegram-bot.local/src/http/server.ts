@@ -70,7 +70,7 @@ export function createHttpServer(
       reply.header('Access-Control-Allow-Origin', origin)
       reply.header('Vary', 'Origin')
       reply.header('Access-Control-Allow-Headers', 'Authorization, Content-Type')
-      reply.header('Access-Control-Allow-Methods', 'GET, PUT, POST, OPTIONS')
+      reply.header('Access-Control-Allow-Methods', 'GET, PUT, POST, DELETE, OPTIONS')
     }
     if (request.method === 'OPTIONS') {
       if (!origin || !config.editorOrigins.includes(origin)) return reply.code(403).send()
@@ -166,6 +166,21 @@ export function createHttpServer(
       error: 'funnel_not_found', message: 'Опубликованная воронка не найдена.',
     })
     return { document }
+  })
+
+  app.delete<{ Params: { id: string } }>('/admin/editor/funnels/:id', async (request, reply) => {
+    if (!paymentDependencies?.adminRepository) return reply.code(503).send({
+      error: 'sync_unavailable', message: 'Архивирование воронки сейчас недоступно.',
+    })
+    const adminId = config.adminIds.values().next().value
+    if (!adminId) return reply.code(503).send({
+      error: 'administrator_unavailable', message: 'На сервере не настроен администратор для журнала изменений.',
+    })
+    const result = await paymentDependencies.adminRepository.archiveEditorFunnel(request.params.id, adminId)
+    if (!result) return reply.code(404).send({
+      error: 'funnel_not_found', message: 'Воронка не найдена или уже находится в архиве.',
+    })
+    return result
   })
 
   if (config.botMode === 'webhook') {

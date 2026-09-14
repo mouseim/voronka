@@ -87,10 +87,14 @@ describe('payment HTTP boundary', () => {
   it('отдаёт только список и активный документ через защищённый editor API', async () => {
     const document = await loadDemo()
     document.analytics.contacts = [{ id: 'private-contact', email: 'hidden@example.test' }]
+    const archiveEditorFunnel = vi.fn(async (id: string) => id === document.funnel.id
+      ? { archived: true as const, replacementSourceId: null }
+      : null)
     const app = server({
       adminRepository: {
         listEditorFunnels: async () => [{ id: document.funnel.id, name: document.funnel.name, activeVersion: 3, updatedAt: '2026-09-14T00:00:00.000Z', publishedAt: '2026-09-14T00:00:00.000Z', isDefault: true, nodeCount: document.nodes.length }],
         getEditorFunnel: async (id: string) => id === document.funnel.id ? { ...document, analytics: { ...document.analytics, contacts: [], applications: [] } } : null,
+        archiveEditorFunnel,
       },
     })
     try {
@@ -101,6 +105,7 @@ describe('payment HTTP boundary', () => {
       })
       expect(list.statusCode).toBe(200)
       expect(list.headers['access-control-allow-origin']).toBe('http://localhost:5173')
+      expect(list.headers['access-control-allow-methods']).toContain('DELETE')
       expect(list.json()).toMatchObject({ funnels: [expect.objectContaining({ id: document.funnel.id, activeVersion: 3 })] })
       const active = await app.inject({
         method: 'GET', url: `/admin/editor/funnels/${document.funnel.id}`,
@@ -112,6 +117,17 @@ describe('payment HTTP boundary', () => {
       expect(active.body).not.toMatch(/secretKey|EDITOR_ADMIN_TOKEN|TELEGRAM_BOT_TOKEN|VK_GROUP_TOKEN/)
       expect((await app.inject({
         method: 'GET', url: '/admin/editor/funnels/missing', headers: { authorization: 'Bearer admin-token-long' },
+      })).statusCode).toBe(404)
+      expect((await app.inject({ method: 'DELETE', url: `/admin/editor/funnels/${document.funnel.id}` })).statusCode).toBe(401)
+      const archived = await app.inject({
+        method: 'DELETE', url: `/admin/editor/funnels/${document.funnel.id}`,
+        headers: { authorization: 'Bearer admin-token-long', origin: 'http://localhost:5173' },
+      })
+      expect(archived.statusCode).toBe(200)
+      expect(archived.json()).toEqual({ archived: true, replacementSourceId: null })
+      expect(archiveEditorFunnel).toHaveBeenCalledWith(document.funnel.id, '1')
+      expect((await app.inject({
+        method: 'DELETE', url: '/admin/editor/funnels/missing', headers: { authorization: 'Bearer admin-token-long' },
       })).statusCode).toBe(404)
     } finally { await app.close() }
   })

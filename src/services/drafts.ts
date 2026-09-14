@@ -91,6 +91,17 @@ export async function deleteDraft(id: string): Promise<void> {
   for (const revision of revisions) await requestFromStore(REVISIONS_STORE, 'readwrite', (store) => store.delete(revision.id))
 }
 
+export async function archiveFunnelDrafts(funnelId: string): Promise<void> {
+  const drafts = (await getDrafts()).filter((draft) => draft.document.funnel.id === funnelId && draft.status !== 'archived')
+  const archivedAt = new Date().toISOString()
+  for (const draft of drafts) {
+    const document = structuredClone(draft.document)
+    document.funnel.status = 'archived'
+    document.funnel.updatedAt = archivedAt
+    await saveDraft(document)
+  }
+}
+
 export async function saveRevision(document: FunnelDocument, reason: string): Promise<DraftRevision> {
   const draftId = draftKey(document)
   const revision: DraftRevision = {

@@ -62,6 +62,10 @@ export async function getServerFunnel(id: string) {
   return (await request<{ document: import('../model/types').FunnelDocument }>(`/admin/editor/funnels/${encodeURIComponent(id)}`)).document
 }
 
+export async function archiveServerFunnel(id: string) {
+  return request<{ archived: true; replacementSourceId: string | null }>(`/admin/editor/funnels/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 export async function getYooKassaStatus() {
   return request<YooKassaIntegrationStatus>('/admin/integrations/yookassa')
 }

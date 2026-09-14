@@ -206,6 +206,11 @@ describe('PostgreSQL import/publish/version integration', () => {
         userId: user.id, funnelId: first.funnelId, versionId: first.versionId,
         status: 'active', currentNodeId: document.funnel.startNodeId, state: {},
       })
+      const oldPayment = await store.createPayment({
+        idempotencyKey: 'archive-keeps-payment', userId: user.id, sessionId: oldSession.id,
+        funnelId: first.funnelId, versionId: first.versionId, productId: document.products[0]!.id,
+        provider: 'yookassa_api', invoicePayload: 'archive-keeps-payment', amountMinor: 149000, currency: 'RUB',
+      })
       const changed = structuredClone(first.document)
       const message = changed.nodes.find((node) => node.type === 'message')!
       message.data.title = `${message.data.title} — обновлено`
@@ -233,6 +238,20 @@ describe('PostgreSQL import/publish/version integration', () => {
       expect(downloaded?.analytics.contacts).toEqual([])
       expect(downloaded?.analytics.applications).toEqual([])
       expect(await admin.getEditorFunnel('missing')).toBeNull()
+
+      expect(await admin.archiveEditorFunnel(document.funnel.id, '1')).toEqual({ archived: true, replacementSourceId: null })
+      expect(await admin.listEditorFunnels()).toEqual([])
+      expect(await admin.getEditorFunnel(document.funnel.id)).toBeNull()
+      expect(await store.resolveVersion()).toBeNull()
+      expect(await store.resolveVersion(document.bot.trackingLinks[0]?.code)).toBeNull()
+      expect((await store.getSession(oldSession.id))?.versionId).toBe(first.versionId)
+      expect(await store.getPayment(oldPayment.id)).toMatchObject({ id: oldPayment.id, status: 'pending' })
+      expect((await database.query('SELECT id FROM funnel_versions WHERE funnel_id = $1', [first.funnelId])).rows).toHaveLength(2)
+      expect(await admin.archiveEditorFunnel(document.funnel.id, '1')).toBeNull()
+
+      const restored = await admin.publishFromEditor(second.document, '1')
+      expect(restored).toMatchObject({ published: true, created: false, versionId: second.versionId })
+      expect(await admin.listEditorFunnels()).toEqual([expect.objectContaining({ id: document.funnel.id, activeVersion: 2, isDefault: true })])
     } finally {
       await database.close()
     }

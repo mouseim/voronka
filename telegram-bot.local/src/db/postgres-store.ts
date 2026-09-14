@@ -81,6 +81,7 @@ export class PostgresRuntimeStore implements RuntimeStore {
         JOIN funnel_versions fv ON fv.id = f.active_version_id
         JOIN LATERAL jsonb_array_elements(fv.raw_document->'bot'->'trackingLinks') link ON true
         WHERE link->>'code' = $1
+          AND f.archived_at IS NULL
           AND COALESCE((link->>'active')::boolean, false) = true
         LIMIT 1
       `, [trackingCode])
@@ -91,7 +92,7 @@ export class PostgresRuntimeStore implements RuntimeStore {
       SELECT fv.*, f.id AS runtime_funnel_id
       FROM funnels f
       JOIN funnel_versions fv ON fv.id = f.active_version_id
-      WHERE f.default_for_bot = true
+      WHERE f.default_for_bot = true AND f.archived_at IS NULL
       LIMIT 1
     `)
     return result.rows[0] ? { version: mapVersion(result.rows[0]) } : null
