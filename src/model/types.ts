@@ -246,6 +246,9 @@ export interface MediaAsset {
   type: MediaType
   required: boolean
   logicalRef: string
+  platformRefs?: {
+    vk?: string
+  }
 }
 
 export interface Product {

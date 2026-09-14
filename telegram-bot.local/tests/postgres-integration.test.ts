@@ -117,6 +117,57 @@ describe('PostgreSQL import/publish/version integration', () => {
       await database.close()
     }
   })
+
+  it('создаёт VK binding из .funnel override и переносит Telegram binding независимо', async () => {
+    const database = await PGlite.create({ extensions: { pgcrypto } })
+    const pool = pglitePool(database)
+    try {
+      await applyMigrations(database)
+      const store = new PostgresRuntimeStore(pool)
+      const admin = new AdminRepository(pool, store)
+      const firstDocument = await loadDemo()
+      const asset = firstDocument.assets[0]!
+      asset.type = 'video'
+      asset.logicalRef = 'video.mp4'
+      asset.platformRefs = { vk: 'video-10_401_first-key' }
+
+      const first = await admin.importDocument(firstDocument, '1')
+      await admin.bindMedia(first.versionId, asset.id, {
+        type: 'video',
+        fileId: 'telegram-video-file',
+        fileUniqueId: 'telegram-video-unique',
+        mimeType: 'video/mp4',
+        fileSize: 2_048,
+      }, '1')
+      expect(await store.getMediaBinding(first.versionId, asset.id, 'telegram')).toMatchObject({ telegramFileId: 'telegram-video-file' })
+      expect(await store.getMediaBinding(first.versionId, asset.id, 'vk')).toMatchObject({
+        attachment: { type: 'video', ownerId: -10, mediaId: 401, accessKey: 'first-key' },
+      })
+      const exported = parseAndMigrateFunnelDocument(await admin.exportFunnel(first.versionId))
+      expect(exported.success).toBe(true)
+      if (exported.success) expect(exported.document.assets[0]!.platformRefs?.vk).toBe('video-10_401_first-key')
+
+      const secondDocument = structuredClone(firstDocument)
+      secondDocument.funnel.version += 1
+      secondDocument.assets[0]!.platformRefs = { vk: 'video-10_402_second-key' }
+      const second = await admin.importDocument(secondDocument, '1')
+
+      expect(await store.getMediaBinding(second.versionId, asset.id, 'telegram')).toMatchObject({ telegramFileId: 'telegram-video-file' })
+      expect(await store.getMediaBinding(second.versionId, asset.id, 'vk')).toMatchObject({
+        attachment: { type: 'video', mediaId: 402, accessKey: 'second-key' },
+      })
+
+      const thirdDocument = structuredClone(secondDocument)
+      thirdDocument.funnel.version += 1
+      delete thirdDocument.assets[0]!.platformRefs
+      const third = await admin.importDocument(thirdDocument, '1')
+
+      expect(await store.getMediaBinding(third.versionId, asset.id, 'telegram')).toMatchObject({ telegramFileId: 'telegram-video-file' })
+      expect(await store.getMediaBinding(third.versionId, asset.id, 'vk')).toBeNull()
+    } finally {
+      await database.close()
+    }
+  })
 })
 
 async function configureAndBind(admin: AdminRepository, versionId: string, document: Awaited<ReturnType<typeof loadDemo>>) {

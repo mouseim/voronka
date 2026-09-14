@@ -101,6 +101,9 @@ const assetSchema = z.object({
   type: z.enum(['image', 'video', 'audio', 'voice', 'video_note', 'document', 'animation']),
   required: z.boolean(),
   logicalRef: z.string(),
+  platformRefs: z.object({
+    vk: z.string().optional(),
+  }).passthrough().optional(),
 }).passthrough()
 
 const productSchema = z.object({

@@ -21,6 +21,7 @@ import { useMemo, useState } from 'react'
 import { assetUsageCount, newId, productUsageCount, slugify, telegramDeepLink, uniqueTrackingCode, variableUsageCount } from '../model/funnel'
 import { defaultValueForType, VARIABLE_TYPE_LABELS } from '../model/variables'
 import { calculateTestResult } from '../model/scoring'
+import { mediaPlatformReadiness, vkMediaCapability } from '../model/platformMedia'
 import type {
   CombinedTestResult,
   FunnelDocument,
@@ -318,11 +319,31 @@ function MediaSection({ document }: { document: FunnelDocument }) {
   const [selectedId, setSelectedId] = useState(document.assets[0]?.id ?? '')
   const selected = document.assets.find((asset) => asset.id === selectedId)
   const patch = (changes: Partial<MediaAsset>) => updateDocument((draft) => { const asset = draft.assets.find((item) => item.id === selectedId); if (asset) Object.assign(asset, changes) })
+  const patchVkRef = (value: string) => updateDocument((draft) => {
+    const asset = draft.assets.find((item) => item.id === selectedId)
+    if (!asset) return
+    const trimmed = value.trim()
+    if (trimmed) asset.platformRefs = { ...asset.platformRefs, vk: value }
+    else if (asset.platformRefs) {
+      delete asset.platformRefs.vk
+      if (!Object.keys(asset.platformRefs).length) delete asset.platformRefs
+    }
+  })
   const add = () => {
     const asset: MediaAsset = { id: newId('asset'), key: `asset_${crypto.randomUUID().slice(0, 8)}`, name: 'Новый материал', type: 'image', required: false, logicalRef: '' }
     updateDocument((draft) => { draft.assets.push(asset) }); setSelectedId(asset.id)
   }
-  return <><PageHeading eyebrow="Каталог" title="Медиа" text="Конструктор хранит место файла в сценарии. Сам файл позднее загружается отдельно в Telegram-боте." action={<button className="button primary" onClick={add}><Plus size={16} /> Добавить материал</button>} /><div className="catalog-layout"><aside className="catalog-list">{document.assets.map((asset) => <button className={selectedId === asset.id ? 'active' : ''} key={asset.id} onClick={() => setSelectedId(asset.id)}><span className="catalog-icon"><FileImage size={16} /></span><span><strong>{asset.name}</strong><small>{mediaLabel(asset.type)} · {assetUsageCount(document, asset.id)} использований</small></span><ChevronRight size={14} /></button>)}</aside><section className="entity-editor">{selected ? <><div className="entity-title-row"><div><span className="eyebrow">Материал</span><h2>{selected.name}</h2></div></div><div className="form-grid"><Field label="Название"><input value={selected.name} onChange={(event) => patch({ name: event.target.value })} /></Field><Field label="Тип"><select value={selected.type} onChange={(event) => patch({ type: event.target.value as MediaAsset['type'] })}>{(['image', 'video', 'audio', 'voice', 'video_note', 'document', 'animation'] as const).map((type) => <option value={type} key={type}>{mediaLabel(type)}</option>)}</select></Field><Field label="Логическая ссылка"><input value={selected.logicalRef} placeholder="Будет заполнено при подключении бота" onChange={(event) => patch({ logicalRef: event.target.value })} /></Field><Toggle checked={selected.required} onChange={(required) => patch({ required })} label="Обязательный материал" /></div><div className={`asset-state ${selected.logicalRef ? 'complete' : ''}`}>{selected.logicalRef ? 'Логическая ссылка заполнена' : 'Ссылка пока не заполнена — это допустимо до подключения бота'}</div><button className="button danger-outline" disabled={assetUsageCount(document, selected.id) > 0} onClick={() => { if (!confirm(`Удалить материал «${selected.name}»?`)) return; updateDocument((draft) => { draft.assets = draft.assets.filter((asset) => asset.id !== selected.id) }); setSelectedId('') }}><Trash2 size={14} /> {assetUsageCount(document, selected.id) ? `Используется в ${assetUsageCount(document, selected.id)} местах` : 'Удалить материал'}</button></> : <Empty title="Материал не выбран" text="Добавьте материал или выберите его слева." />}</section></div></>
+  const readiness = selected ? mediaPlatformReadiness(selected) : null
+  const vkCapability = selected ? vkMediaCapability(selected.type) : null
+  return <><PageHeading eyebrow="Каталог" title="Медиа" text="Один материал используется в общей логике Telegram и VK. Отдельный VK attachment нужен только там, где способ доставки отличается." action={<button className="button primary" onClick={add}><Plus size={16} /> Добавить материал</button>} /><div className="catalog-layout"><aside className="catalog-list">{document.assets.map((asset) => { const state = mediaPlatformReadiness(asset); return <button className={selectedId === asset.id ? 'active' : ''} key={asset.id} onClick={() => setSelectedId(asset.id)}><span className="catalog-icon"><FileImage size={16} /></span><span><strong>{asset.name}</strong><small>{mediaLabel(asset.type)} · Telegram {statusSymbol(state.telegram.state)} · VK {statusSymbol(state.vk.state)}</small></span><ChevronRight size={14} /></button> })}</aside><section className="entity-editor">{selected && readiness && vkCapability ? <><div className="entity-title-row"><div><span className="eyebrow">Материал</span><h2>{selected.name}</h2></div></div><div className="form-grid"><Field label="Название"><input value={selected.name} onChange={(event) => patch({ name: event.target.value })} /></Field><Field label="Тип"><select value={selected.type} onChange={(event) => patch({ type: event.target.value as MediaAsset['type'] })}>{(['image', 'video', 'audio', 'voice', 'video_note', 'document', 'animation'] as const).map((type) => <option value={type} key={type}>{mediaLabel(type)}</option>)}</select></Field><Field label="Общий источник / Telegram"><input value={selected.logicalRef} placeholder="Например, video.mp4 или telegram:file/..." onChange={(event) => patch({ logicalRef: event.target.value })} /></Field><Toggle checked={selected.required} onChange={(required) => patch({ required })} label="Обязательный материал" /></div>{(vkCapability.supported || selected.platformRefs?.vk) && <div className="platform-override"><Field label="VK attachment (необязательно)"><input value={selected.platformRefs?.vk ?? ''} placeholder={vkCapability.attachmentType === 'video' ? 'video-123456789_987654321' : `${vkCapability.attachmentType ?? 'attachment'}-123456789_987654321`} onChange={(event) => patchVkRef(event.target.value)} /></Field><p>{!vkCapability.supported ? 'Этот тип не поддерживается VK. Удалите сохранённый VK attachment.' : selected.type === 'video' ? 'Для VK-видео укажите attachment ID загруженного видео.' : 'Оставьте пустым, чтобы позже загрузить или привязать материал через /vkmedia.'}</p></div>}<div className="platform-readiness"><PlatformStatus name="Telegram" status={readiness.telegram} /><PlatformStatus name="VK" status={readiness.vk} /></div><button className="button danger-outline" disabled={assetUsageCount(document, selected.id) > 0} onClick={() => { if (!confirm(`Удалить материал «${selected.name}»?`)) return; updateDocument((draft) => { draft.assets = draft.assets.filter((asset) => asset.id !== selected.id) }); setSelectedId('') }}><Trash2 size={14} /> {assetUsageCount(document, selected.id) ? `Используется в ${assetUsageCount(document, selected.id)} местах` : 'Удалить материал'}</button></> : <Empty title="Материал не выбран" text="Добавьте материал или выберите его слева." />}</section></div></>
+}
+
+function statusSymbol(state: 'ready' | 'warning' | 'unsupported') {
+  return state === 'ready' ? '✅' : state === 'warning' ? '⚠️' : '❌'
+}
+
+function PlatformStatus({ name, status }: { name: string; status: ReturnType<typeof mediaPlatformReadiness>['telegram'] }) {
+  return <div className={`platform-status ${status.state}`}><strong>{name} {statusSymbol(status.state)}</strong><span>{status.label}</span></div>
 }
 
 function ProductsSection({ document }: { document: FunnelDocument }) {

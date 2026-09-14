@@ -1,4 +1,5 @@
 import { nodeHandles, nodeTitle } from './funnel'
+import { parseVkAttachment, vkAttachmentTypeForMedia, vkMediaCapability } from './platformMedia'
 import { operationNeedsValue, operationsForType, operatorNeedsValue, operatorsForType } from './variables'
 import type { ConditionData, FunnelDocument, MessageData, ProductBlockData, TestBlockData, ValidationIssue, VariableData } from './types'
 
@@ -91,6 +92,20 @@ export function validateFunnel(document: FunnelDocument): ValidationIssue[] {
 
   document.assets.forEach((asset) => {
     if (!asset.logicalRef.trim()) add({ severity: asset.required ? 'warning' : 'advice', section: 'media', code: 'asset_empty', message: `Для материала «${asset.name}» ещё не заполнена логическая ссылка.` })
+    const vkRef = asset.platformRefs?.vk?.trim()
+    if (!vkRef) return
+    const capability = vkMediaCapability(asset.type)
+    if (!capability.supported) {
+      add({ severity: 'error', section: 'media', code: 'vk_media_unsupported', message: `VK: тип материала «${asset.name}» пока не поддерживается.` })
+      return
+    }
+    try {
+      const attachment = parseVkAttachment(vkRef)
+      const expected = vkAttachmentTypeForMedia(asset.type)
+      if (attachment.type !== expected) add({ severity: 'error', section: 'media', code: 'vk_attachment_type_mismatch', message: `VK: для материала «${asset.name}» нужен attachment типа ${expected}.` })
+    } catch {
+      add({ severity: 'error', section: 'media', code: 'vk_attachment_invalid', message: `VK: для материала «${asset.name}» указан неверный формат attachment.` })
+    }
   })
 
   const codes = new Set<string>()

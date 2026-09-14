@@ -88,6 +88,12 @@ describe('VK media bindings', () => {
     expect(api.messages[0]?.attachment).toBe('video-10_404_video-key')
   })
 
+  it('использует единый parser для access key, voice и неверного VK attachment', () => {
+    expect(parseVkAttachment('video-10_404_access-key')).toMatchObject({ type: 'video', accessKey: 'access-key' })
+    expect(parseVkAttachment('audio_message-10_202_voice-key')).toMatchObject({ type: 'audio_message', mediaId: 202 })
+    expect(() => parseVkAttachment('video-without-owner-and-id')).toThrow('VK_ATTACHMENT_INVALID')
+  })
+
   it('даёт явную ошибку для обязательного asset без VK binding', async () => {
     const document = await mediaDocument('image')
     const store = new MemoryRuntimeStore()

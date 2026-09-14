@@ -752,6 +752,7 @@ code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monosp
   .catalog-list { max-height: 260px; margin-bottom: 10px; border: 1px solid #dfe3e9; border-radius: 12px; }
   .entity-editor { padding: 15px; border: 1px solid #dfe3e9; border-radius: 12px; background: #fff; }
   .form-grid { grid-template-columns: 1fr; }
+  .platform-readiness { grid-template-columns: 1fr; }
   .field.wide { grid-column: auto; }
   .editor-group { overflow-x: auto; }
   .scale-editor-row { min-width: 560px; grid-template-columns: 30px 1fr 110px 145px 30px; }
@@ -862,6 +863,14 @@ code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monosp
 .calculator-options label { padding: 8px; border: 1px solid #e0e3e8; border-radius: 8px; display: flex; gap: 7px; font-weight: 500; }
 .asset-state { margin: 8px 0 15px; padding: 10px; border-radius: 8px; color: #a16f38; background: #fff5e9; font-size: 9px; }
 .asset-state.complete { color: #277e63; background: #ebf7f2; }
+.platform-override { margin-top: 16px; padding: 13px; border: 1px solid #e1e5ee; border-radius: 10px; background: #fafbfe; }
+.platform-override p { margin: 7px 0 0; color: #8a929e; font-size: 8px; line-height: 1.45; }
+.platform-readiness { margin: 14px 0 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.platform-status { min-height: 52px; padding: 10px; border-radius: 9px; display: flex; flex-direction: column; gap: 4px; color: #9a6d38; background: #fff5e9; }
+.platform-status.ready { color: #277e63; background: #ebf7f2; }
+.platform-status.unsupported { color: #ad4f57; background: #fff0f1; }
+.platform-status strong { font-size: 9px; }
+.platform-status span { font-size: 8px; line-height: 1.35; }
 .choice-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .choice-cards label { min-height: 64px; border: 1px solid #e0e3e8; border-radius: 9px; padding: 10px; display: flex; align-items: center; gap: 8px; color: #66707d; background: #fff; cursor: pointer; }
 .choice-cards label.active { color: #5067ce; border-color: #bfcaf0; background: #f1f3fc; }

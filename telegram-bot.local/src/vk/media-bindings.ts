@@ -3,6 +3,9 @@ import type { VkMediaAttachment, VkMediaBinding } from '../domain/types'
 import type { AdminRepository } from '../admin/repository'
 import type { VkApi, VkPhotoUploadResult, VkSavedAttachmentIdentity } from './api'
 import { uploadVkMultipart } from './upload'
+import { parseVkAttachment } from '../../../src/model/platformMedia'
+
+export { parseVkAttachment } from '../../../src/model/platformMedia'
 
 interface VkMediaFile {
   content: Buffer
@@ -60,17 +63,6 @@ export class VkMediaBindingService {
     const identity = type === 'doc' ? saved.doc : saved.audio_message
     if (!identity) throw new Error(`VK_DOC_SAVE_MISSING:${type}`)
     return toAttachment(type, identity)
-  }
-}
-
-export function parseVkAttachment(value: string): VkMediaAttachment {
-  const match = value.trim().match(/(?:https?:\/\/(?:m\.)?vk\.com\/)?(photo|video|doc)(-?\d+)_(\d+)(?:_([A-Za-z0-9_-]+))?$/)
-  if (!match) throw new Error('VK_ATTACHMENT_INVALID')
-  return {
-    type: match[1] as VkMediaAttachment['type'],
-    ownerId: Number(match[2]),
-    mediaId: Number(match[3]),
-    accessKey: match[4] || undefined,
   }
 }
 

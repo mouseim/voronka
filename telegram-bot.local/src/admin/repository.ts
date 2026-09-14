@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { QueryResultRow } from 'pg'
+import type { PoolClient, QueryResultRow } from 'pg'
 import { validateForRuntime } from '../core/runtime-validation'
 import type { FunnelDocument, MediaType, ValidationIssue } from '../core/shared'
 import type { ProductRuntimeConfig, ProductType, PaymentProviderName, VkMediaAttachment } from '../domain/types'
@@ -7,6 +7,7 @@ import { buildAnalyticsSnapshot } from '../analytics/snapshot'
 import { toCsv } from '../analytics/csv'
 import type { DatabasePool } from '../db/pool'
 import type { PostgresRuntimeStore } from '../db/postgres-store'
+import { parseVkAttachment, vkAttachmentTypeForMedia } from '../../../src/model/platformMedia'
 
 export interface ImportedVersion {
   versionId: string
@@ -19,6 +20,14 @@ export class AdminRepository {
   constructor(private readonly pool: DatabasePool, private readonly runtimeStore: PostgresRuntimeStore) {}
 
   async importDocument(document: FunnelDocument, adminTelegramId: string): Promise<ImportedVersion> {
+    const vkOverrides = new Map<string, VkMediaAttachment>()
+    for (const asset of document.assets) {
+      const value = asset.platformRefs?.vk?.trim()
+      if (!value) continue
+      const attachment = parseVkAttachment(value)
+      if (vkAttachmentTypeForMedia(asset.type) !== attachment.type) throw new Error(`MEDIA_TYPE_MISMATCH:${asset.type}`)
+      vkOverrides.set(asset.id, attachment)
+    }
     const hash = createHash('sha256').update(JSON.stringify(document)).digest('hex')
     return this.runtimeStore.transaction(async (client) => {
       let funnel = await client.query<{ id: string }>('SELECT id FROM funnels WHERE source_funnel_id = $1 FOR UPDATE', [document.funnel.id])
@@ -55,11 +64,11 @@ export class AdminRepository {
 
       for (const asset of document.assets) {
         const oldAsset = previousAssets.get(asset.id)
-        const copyBinding = oldAsset
+        const copyTelegramBinding = oldAsset
           && oldAsset.key === asset.key
           && oldAsset.type === asset.type
           && oldAsset.logicalRef === asset.logicalRef
-        if (copyBinding && previous.rows[0]) {
+        if (copyTelegramBinding && previous.rows[0]) {
           await client.query(`
             INSERT INTO version_media_bindings(
               version_id, asset_id, asset_key, expected_type, platform, resource_id, verified_at,
@@ -68,7 +77,7 @@ export class AdminRepository {
             SELECT $1, asset_id, $3, $4, platform, resource_id, verified_at,
                    vk_attachment_type, vk_owner_id, vk_media_id, vk_access_key
             FROM version_media_bindings
-            WHERE version_id = $2 AND asset_id = $5
+            WHERE version_id = $2 AND asset_id = $5 AND platform = 'telegram'
             ON CONFLICT (version_id, asset_id, platform) DO NOTHING
           `, [versionId, previous.rows[0].id, asset.key, asset.type, asset.id])
         }
@@ -77,6 +86,22 @@ export class AdminRepository {
           VALUES ($1, $2, $3, $4, 'telegram')
           ON CONFLICT (version_id, asset_id, platform) DO NOTHING
         `, [versionId, asset.id, asset.key, asset.type])
+        const vkOverride = vkOverrides.get(asset.id)
+        if (vkOverride) {
+          await upsertVkMediaBinding(client, versionId, asset.id, asset.key, asset.type, vkOverride)
+        } else if (copyTelegramBinding && !oldAsset?.platformRefs?.vk?.trim() && previous.rows[0]) {
+          await client.query(`
+            INSERT INTO version_media_bindings(
+              version_id, asset_id, asset_key, expected_type, platform,
+              vk_attachment_type, vk_owner_id, vk_media_id, vk_access_key, verified_at
+            )
+            SELECT $1, asset_id, $3, $4, platform,
+                   vk_attachment_type, vk_owner_id, vk_media_id, vk_access_key, verified_at
+            FROM version_media_bindings
+            WHERE version_id = $2 AND asset_id = $5 AND platform = 'vk'
+            ON CONFLICT (version_id, asset_id, platform) DO NOTHING
+          `, [versionId, previous.rows[0].id, asset.key, asset.type, asset.id])
+        }
       }
       for (const product of document.products) {
         await client.query(`
@@ -251,21 +276,9 @@ export class AdminRepository {
     `, [versionId, assetId])
     const asset = expected.rows[0]
     if (!asset) throw new Error('ASSET_NOT_FOUND')
-    if (vkTypeForMedia(asset.expected_type) !== attachment.type) throw new Error(`MEDIA_TYPE_MISMATCH:${asset.expected_type}`)
+    if (vkAttachmentTypeForMedia(asset.expected_type) !== attachment.type) throw new Error(`MEDIA_TYPE_MISMATCH:${asset.expected_type}`)
     await this.runtimeStore.transaction(async (client) => {
-      await client.query(`
-        INSERT INTO version_media_bindings(
-          version_id, asset_id, asset_key, expected_type, platform,
-          vk_attachment_type, vk_owner_id, vk_media_id, vk_access_key, verified_at
-        )
-        VALUES ($1, $2, $3, $4, 'vk', $5, $6, $7, $8, now())
-        ON CONFLICT (version_id, asset_id, platform) DO UPDATE SET
-          vk_attachment_type = EXCLUDED.vk_attachment_type,
-          vk_owner_id = EXCLUDED.vk_owner_id,
-          vk_media_id = EXCLUDED.vk_media_id,
-          vk_access_key = EXCLUDED.vk_access_key,
-          verified_at = now(), updated_at = now()
-      `, [versionId, assetId, asset.asset_key, asset.expected_type, attachment.type, attachment.ownerId, attachment.mediaId, attachment.accessKey ?? null])
+      await upsertVkMediaBinding(client, versionId, assetId, asset.asset_key, asset.expected_type, attachment)
       await client.query(`
         INSERT INTO admin_audit_log(admin_telegram_id, action, version_id, details)
         VALUES ($1, 'bind_vk_media', $2, $3)
@@ -569,12 +582,29 @@ interface MediaListRow extends QueryResultRow {
   vk_access_key: string | null
 }
 
-function vkTypeForMedia(type: MediaType) {
-  if (type === 'image') return 'photo'
-  if (type === 'video') return 'video'
-  if (type === 'voice') return 'audio_message'
-  if (type === 'document') return 'doc'
-  return null
+async function upsertVkMediaBinding(
+  client: Pick<PoolClient, 'query'>,
+  versionId: string,
+  assetId: string,
+  assetKey: string,
+  expectedType: MediaType,
+  attachment: VkMediaAttachment,
+) {
+  await client.query(`
+    INSERT INTO version_media_bindings(
+      version_id, asset_id, asset_key, expected_type, platform,
+      vk_attachment_type, vk_owner_id, vk_media_id, vk_access_key, verified_at
+    )
+    VALUES ($1, $2, $3, $4, 'vk', $5, $6, $7, $8, now())
+    ON CONFLICT (version_id, asset_id, platform) DO UPDATE SET
+      asset_key = EXCLUDED.asset_key,
+      expected_type = EXCLUDED.expected_type,
+      vk_attachment_type = EXCLUDED.vk_attachment_type,
+      vk_owner_id = EXCLUDED.vk_owner_id,
+      vk_media_id = EXCLUDED.vk_media_id,
+      vk_access_key = EXCLUDED.vk_access_key,
+      verified_at = now(), updated_at = now()
+  `, [versionId, assetId, assetKey, expectedType, attachment.type, attachment.ownerId, attachment.mediaId, attachment.accessKey ?? null])
 }
 
 interface ProductConfigRow extends QueryResultRow {
