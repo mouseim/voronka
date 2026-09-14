@@ -44,11 +44,13 @@ interface EngineOptions {
   paymentProviderToken?: string
   now?: () => Date
   automaticTransitionLimit?: number
+  recoveryDelayMs?: number
 }
 
 export class FunnelEngine {
   private readonly now: () => Date
   private readonly transitionLimit: number
+  private readonly recoveryDelayMs: number
 
   constructor(
     private readonly store: RuntimeStore,
@@ -57,6 +59,7 @@ export class FunnelEngine {
   ) {
     this.now = options.now ?? (() => new Date())
     this.transitionLimit = options.automaticTransitionLimit ?? 50
+    this.recoveryDelayMs = options.recoveryDelayMs ?? 30_000
   }
 
   async start(profile: PlatformProfile, trackingCode?: string): Promise<void> {
@@ -1095,7 +1098,7 @@ export class FunnelEngine {
       uniqueKey: `resume:${session.id}:${session.revision}`,
       type: 'resume_session',
       payload: { sessionId: session.id, nodeId: session.currentNodeId },
-      dueAt: this.now().toISOString(),
+      dueAt: new Date(this.now().getTime() + this.recoveryDelayMs).toISOString(),
       maxAttempts: 5,
     })
   }

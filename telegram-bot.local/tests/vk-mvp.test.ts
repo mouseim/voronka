@@ -116,6 +116,21 @@ describe('VK MVP', () => {
       keyboard: '{"inline":true}',
     })
   })
+
+  it('ACK VK callback не отправляет пустой event_data', async () => {
+    let request: { url: string; body: URLSearchParams } | undefined
+    const fetcher: typeof fetch = async (input, init) => {
+      request = { url: String(input), body: new URLSearchParams(String(init?.body)) }
+      return new Response(JSON.stringify({ response: 1 }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }
+    const client = new VkApiClient('vk-test-token', '123', '5.199', fetcher)
+
+    await client.answerMessageEvent('event-1', '101', '101')
+
+    expect(request?.url).toBe('https://api.vk.com/method/messages.sendMessageEventAnswer')
+    expect(Object.fromEntries(request!.body)).toMatchObject({ event_id: 'event-1', user_id: '101', peer_id: '101' })
+    expect(request!.body.has('event_data')).toBe(false)
+  })
 })
 
 class FakeVkApi implements VkApi {

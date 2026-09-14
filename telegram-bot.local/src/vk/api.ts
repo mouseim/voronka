@@ -48,7 +48,6 @@ export class VkApiClient implements VkApi {
       event_id: eventId,
       user_id: userId,
       peer_id: peerId,
-      event_data: '{}',
     })
   }
 

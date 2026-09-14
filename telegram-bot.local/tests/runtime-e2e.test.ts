@@ -278,6 +278,7 @@ describe('E2E runtime с фальшивым Telegram transport', () => {
     await expect(engine.start(profile)).rejects.toThrow('TEMPORARY_TELEGRAM_ERROR')
     const recovery = [...store.jobs.values()].find((job) => job.type === 'resume_session' && job.status === 'pending')
     expect(recovery).toBeDefined()
+    expect(Date.parse(recovery!.dueAt)).toBeGreaterThan(Date.now())
     await engine.handleJob(recovery!)
     expect(transport.texts.some((message) => message.text.includes('Здравствуйте'))).toBe(true)
     expect([...store.sessions.values()][0]?.status).toBe('waiting')
