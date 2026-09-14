@@ -5,9 +5,25 @@ export interface YooKassaIntegrationStatus {
   updatedAt: string | null
 }
 
+export interface PublishFunnelResponse {
+  published: true
+  created: boolean
+  unchanged: boolean
+  version: number
+  document: import('../model/types').FunnelDocument
+  issues: import('../model/types').ValidationIssue[]
+}
+
+export class RuntimeRequestError extends Error {
+  constructor(message: string, readonly issues: import('../model/types').ValidationIssue[] = []) {
+    super(message)
+  }
+}
+
 const buildEnv = (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env
-let runtimeUrl = String(buildEnv?.VITE_RUNTIME_API_URL ?? '').replace(/\/$/, '')
-let adminToken = ''
+const browserStorage = typeof window === 'undefined' ? null : window
+let runtimeUrl = String(browserStorage?.localStorage.getItem('voronka.runtimeUrl') ?? buildEnv?.VITE_RUNTIME_API_URL ?? '').replace(/\/$/, '')
+let adminToken = String(browserStorage?.sessionStorage.getItem('voronka.adminToken') ?? '')
 
 export function integrationConnection() {
   return { runtimeUrl, adminToken }
@@ -16,6 +32,15 @@ export function integrationConnection() {
 export function setIntegrationConnection(next: { runtimeUrl: string; adminToken: string }) {
   runtimeUrl = next.runtimeUrl.trim().replace(/\/$/, '')
   adminToken = next.adminToken
+  browserStorage?.localStorage.setItem('voronka.runtimeUrl', runtimeUrl)
+  if (adminToken) browserStorage?.sessionStorage.setItem('voronka.adminToken', adminToken)
+  else browserStorage?.sessionStorage.removeItem('voronka.adminToken')
+}
+
+export async function publishFunnel(document: import('../model/types').FunnelDocument) {
+  return request<PublishFunnelResponse>('/admin/editor/publish', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(document),
+  })
 }
 
 export async function getYooKassaStatus() {
@@ -40,7 +65,8 @@ async function request<T>(path: string, init: RequestInit = {}) {
   })
   if (!response.ok) {
     if (response.status === 401) throw new Error('Токен администратора не принят.')
-    throw new Error('Runtime не выполнил запрос. Проверьте адрес и настройки интеграции.')
+    const body = await response.json().catch(() => null) as { message?: string; issues?: import('../model/types').ValidationIssue[] } | null
+    throw new RuntimeRequestError(body?.message ?? 'Runtime не выполнил запрос. Проверьте адрес и настройки интеграции.', body?.issues ?? [])
   }
   return await response.json() as T
 }

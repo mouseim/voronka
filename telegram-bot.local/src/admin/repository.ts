@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import type { PoolClient, QueryResultRow } from 'pg'
 import { validateForRuntime } from '../core/runtime-validation'
-import type { FunnelDocument, MediaType, ValidationIssue } from '../core/shared'
+import { emptyAnalytics, type FunnelDocument, type MediaType, type ValidationIssue } from '../core/shared'
 import type { ProductRuntimeConfig, ProductType, PaymentProviderName, VkMediaAttachment } from '../domain/types'
 import { buildAnalyticsSnapshot } from '../analytics/snapshot'
 import { toCsv } from '../analytics/csv'
@@ -16,10 +16,15 @@ export interface ImportedVersion {
   document: FunnelDocument
 }
 
+export interface EditorPublishResult extends ImportedVersion {
+  published: boolean
+  issues: ValidationIssue[]
+}
+
 export class AdminRepository {
   constructor(private readonly pool: DatabasePool, private readonly runtimeStore: PostgresRuntimeStore) {}
 
-  async importDocument(document: FunnelDocument, adminTelegramId: string): Promise<ImportedVersion> {
+  async importDocument(document: FunnelDocument, adminTelegramId: string, options: { autoVersion?: boolean } = {}): Promise<ImportedVersion> {
     const vkOverrides = new Map<string, VkMediaAttachment>()
     for (const asset of document.assets) {
       const value = asset.platformRefs?.vk?.trim()
@@ -28,7 +33,6 @@ export class AdminRepository {
       if (vkAttachmentTypeForMedia(asset.type) !== attachment.type) throw new Error(`MEDIA_TYPE_MISMATCH:${asset.type}`)
       vkOverrides.set(asset.id, attachment)
     }
-    const hash = createHash('sha256').update(JSON.stringify(document)).digest('hex')
     return this.runtimeStore.transaction(async (client) => {
       let funnel = await client.query<{ id: string }>('SELECT id FROM funnels WHERE source_funnel_id = $1 FOR UPDATE', [document.funnel.id])
       if (!funnel.rows[0]) {
@@ -41,9 +45,31 @@ export class AdminRepository {
         await client.query('UPDATE funnels SET name = $2, updated_at = now() WHERE id = $1', [funnel.rows[0].id, document.funnel.name])
       }
       const funnelId = funnel.rows[0]!.id
+      let candidate = document
+      if (options.autoVersion) {
+        const latest = await client.query<{ id: string; version: number; raw_document: FunnelDocument }>(`
+          SELECT id, version, raw_document
+          FROM funnel_versions
+          WHERE funnel_id = $1
+          ORDER BY version DESC
+          LIMIT 1
+        `, [funnelId])
+        const previous = latest.rows[0]
+        if (previous && semanticDocumentHash(previous.raw_document) === semanticDocumentHash(document)) {
+          return { versionId: previous.id, funnelId, created: false, document: previous.raw_document }
+        }
+        const nextVersion = (previous?.version ?? 0) + 1
+        candidate = structuredClone(document)
+        candidate.funnel.version = nextVersion
+        candidate.funnel.parentVersion = previous?.version
+        candidate.funnel.status = 'draft'
+        candidate.funnel.updatedAt = new Date().toISOString()
+        candidate.analytics = emptyAnalytics(nextVersion)
+      }
+      const hash = createHash('sha256').update(JSON.stringify(candidate)).digest('hex')
       const existing = await client.query<{ id: string; content_hash: string; raw_document: FunnelDocument }>(
         'SELECT id, content_hash, raw_document FROM funnel_versions WHERE funnel_id = $1 AND version = $2',
-        [funnelId, document.funnel.version],
+        [funnelId, candidate.funnel.version],
       )
       if (existing.rows[0]) {
         if (existing.rows[0].content_hash !== hash) throw new Error('VERSION_NUMBER_ALREADY_HAS_DIFFERENT_CONTENT')
@@ -53,16 +79,16 @@ export class AdminRepository {
         INSERT INTO funnel_versions(funnel_id, version, schema_version, status, content_hash, raw_document, imported_by)
         VALUES ($1, $2, $3, 'draft', $4, $5, $6)
         RETURNING id
-      `, [funnelId, document.funnel.version, document.schemaVersion, hash, JSON.stringify(document), adminTelegramId])
+      `, [funnelId, candidate.funnel.version, candidate.schemaVersion, hash, JSON.stringify(candidate), adminTelegramId])
       const versionId = inserted.rows[0]!.id
       const previous = await client.query<{ id: string; raw_document: FunnelDocument }>(`
         SELECT id, raw_document FROM funnel_versions
         WHERE funnel_id = $1 AND version < $2
         ORDER BY version DESC LIMIT 1
-      `, [funnelId, document.funnel.version])
+      `, [funnelId, candidate.funnel.version])
       const previousAssets = new Map((previous.rows[0]?.raw_document.assets ?? []).map((asset) => [asset.id, asset]))
 
-      for (const asset of document.assets) {
+      for (const asset of candidate.assets) {
         const oldAsset = previousAssets.get(asset.id)
         const copyTelegramBinding = oldAsset
           && oldAsset.key === asset.key
@@ -103,7 +129,7 @@ export class AdminRepository {
           `, [versionId, previous.rows[0].id, asset.key, asset.type, asset.id])
         }
       }
-      for (const product of document.products) {
+      for (const product of candidate.products) {
         await client.query(`
           INSERT INTO runtime_product_configs(
             version_id, product_id, product_type, provider, currency, amount_minor,
@@ -122,9 +148,19 @@ export class AdminRepository {
       await client.query(`
         INSERT INTO admin_audit_log(admin_telegram_id, action, funnel_id, version_id, details)
         VALUES ($1, 'import_version', $2, $3, $4)
-      `, [adminTelegramId, funnelId, versionId, JSON.stringify({ version: document.funnel.version, hash })])
-      return { versionId, funnelId, created: true, document }
+      `, [adminTelegramId, funnelId, versionId, JSON.stringify({ version: candidate.funnel.version, hash })])
+      return { versionId, funnelId, created: true, document: candidate }
     })
+  }
+
+  async publishFromEditor(document: FunnelDocument, adminTelegramId: string): Promise<EditorPublishResult> {
+    const imported = await this.importDocument(document, adminTelegramId, { autoVersion: true })
+    const result = await this.publish(imported.versionId, adminTelegramId)
+    if (!result.published) return { ...imported, published: false, issues: result.issues }
+    await this.setDefault(imported.funnelId, adminTelegramId)
+    const publishedDocument = structuredClone(imported.document)
+    publishedDocument.funnel.status = 'published'
+    return { ...imported, document: publishedDocument, published: true, issues: result.issues }
   }
 
   async publicationIssues(versionId: string, allowPlaceholders = false): Promise<ValidationIssue[]> {
@@ -147,16 +183,16 @@ export class AdminRepository {
       const integration = await this.pool.query<{ verified_at: Date | string | null }>("SELECT verified_at FROM payment_integrations WHERE provider = 'yookassa_api'")
       if (!integration.rows[0]) issues.push({
         severity: 'error', section: 'products', code: 'yookassa_api_unconfigured',
-        message: 'Для продукта выбрана прямая ЮKassa, но интеграция не подключена.',
+        message: 'Сначала подключите ЮKassa в разделе «Интеграции».',
       })
       else if (!integration.rows[0].verified_at) issues.push({
         severity: 'error', section: 'products', code: 'yookassa_api_unverified',
-        message: 'Подключение ЮKassa не прошло проверку учетных данных.',
+        message: 'Проверьте подключение ЮKassa в разделе «Интеграции».',
       })
     }
     if (!allowPlaceholders) {
-      const missing = await this.pool.query<{ asset_id: string; asset_key: string }>(`
-        SELECT b.asset_id, b.asset_key
+      const missing = await this.pool.query<{ asset_name: string }>(`
+        SELECT COALESCE(NULLIF(asset->>'name', ''), b.asset_key) AS asset_name
         FROM version_media_bindings b
         JOIN funnel_versions fv ON fv.id = b.version_id
         JOIN LATERAL jsonb_array_elements(fv.raw_document->'assets') asset ON asset->>'id' = b.asset_id
@@ -169,7 +205,7 @@ export class AdminRepository {
         severity: 'error',
         section: 'media',
         code: 'runtime_media_binding_missing',
-        message: `Не загружен обязательный Telegram-файл ${row.asset_key} (${row.asset_id}).`,
+        message: `Не загружен обязательный файл «${row.asset_name}». Загрузите его через резервную Telegram-админку.`,
       }))
     }
     return issues
@@ -630,4 +666,26 @@ interface ProductConfigRow extends QueryResultRow {
   delivery_by_result: Record<string, string[]>
   repeat_policy: ProductRuntimeConfig['repeatPolicy']
   after_purchase_text: string
+}
+
+function semanticDocumentHash(document: FunnelDocument) {
+  const comparable = structuredClone(document) as FunnelDocument
+  delete comparable.funnel.parentVersion
+  delete comparable.funnel.changeComment
+  comparable.funnel.version = 1
+  comparable.funnel.status = 'draft'
+  comparable.funnel.createdAt = ''
+  comparable.funnel.updatedAt = ''
+  comparable.analytics = emptyAnalytics(1)
+  comparable.editor = { nodePositions: {}, collapsedNodeIds: [] }
+  return createHash('sha256').update(canonicalJson(comparable)).digest('hex')
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
 }

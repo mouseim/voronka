@@ -156,6 +156,10 @@ code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monosp
 
 /* Editor */
 .editor-page { height: 100vh; min-height: 580px; display: flex; flex-direction: column; overflow: hidden; background: #f5f6fa; }
+.publish-status { min-height: 42px; padding: 7px 16px; border-bottom: 1px solid #dbe3ee; display: flex; align-items: center; justify-content: center; gap: 12px; color: #52616f; background: #f4f7fb; font-size: 11px; font-weight: 650; text-align: center; }
+.publish-status.success { color: #236f5a; border-color: #cfe7de; background: #eef9f5; }
+.publish-status.error { color: #9a4148; border-color: #efd4d6; background: #fff3f4; }
+.publish-status .button { min-height: 30px; }
 .editor-layout { min-height: 0; flex: 1; display: grid; grid-template-columns: 214px minmax(0, 1fr) 308px; }
 .side-panel { background: #fff; min-width: 0; z-index: 10; }
 .block-library { border-right: 1px solid #e0e3e9; padding: 20px 14px; overflow-y: auto; }

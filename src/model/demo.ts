@@ -100,6 +100,7 @@ export function freshDemoFunnel(): FunnelDocument {
     description: 'Расширенный разбор механизмов и практические рекомендации.',
     price: 1490,
     active: true,
+    paymentProvider: 'yookassa_api',
     assetId: 'asset_guide',
     afterPurchaseText: 'Спасибо за покупку! Отчёт будет отправлен ботом.',
   }]

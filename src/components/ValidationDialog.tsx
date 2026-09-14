@@ -18,7 +18,7 @@ export function ValidationDialog({ issues, onClose, onSelectIssue }: ValidationD
           {errors.length ? <XCircle size={26} /> : issues.length ? <AlertTriangle size={26} /> : <CheckCircle2 size={26} />}
         </div>
         <h2 id="validation-title">{errors.length ? 'Нужны исправления' : issues.length ? 'Проверка завершена' : 'Воронка готова'}</h2>
-        <p className="dialog-lead">{errors.length ? `${errors.length} ошибок мешают корректной работе. Исправьте их перед экспортом.` : warnings.length ? `Ошибок нет, но найдено предупреждений: ${warnings.length}.` : 'Ошибок и предупреждений не найдено.'}</p>
+        <p className="dialog-lead">{errors.length ? `${errors.length} ошибок мешают корректной работе. Исправьте их перед публикацией или экспортом.` : warnings.length ? `Ошибок нет, но найдено предупреждений: ${warnings.length}.` : 'Ошибок и предупреждений не найдено.'}</p>
         {!!issues.length && (
           <div className="issue-list">
             {issues.map((issue, index) => (

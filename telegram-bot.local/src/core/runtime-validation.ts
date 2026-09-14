@@ -58,7 +58,7 @@ export function validateForRuntime(document: FunnelDocument, context: RuntimeVal
       severity: 'error',
       section: 'products',
       code: 'runtime_product_unconfigured',
-      message: `Для продукта «${product.name}» не выбран платёжный провайдер. Импорт как draft разрешён, публикация заблокирована.`,
+      message: `Для продукта «${product.name}» выберите способ оплаты.`,
     })
     if (config?.productType === 'digital' && config.provider === 'yookassa') add({
       severity: 'error',

@@ -1,6 +1,6 @@
 export { parseAndMigrateFunnelDocument } from '../../../src/model/schema'
 export { calculateTestResult } from '../../../src/model/scoring'
-export { nodeHandles, nodeTitle } from '../../../src/model/funnel'
+export { emptyAnalytics, nodeHandles, nodeTitle } from '../../../src/model/funnel'
 export { nextNodeId } from '../../../src/model/simulator'
 export { validateFunnel } from '../../../src/model/validation'
 export {

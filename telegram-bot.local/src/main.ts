@@ -67,6 +67,7 @@ const worker = createJobWorker(store, {
 }, logger, config.workerPollMs)
 const maintenance = createMaintenanceWorker(pool, logger)
 const server = createHttpServer(config, pool, bot, engine, logger, {
+  adminRepository,
   integration: yookassaIntegration ?? undefined,
   payments: directPayments,
   async acceptYooKassaPayment(providerPaymentId) {

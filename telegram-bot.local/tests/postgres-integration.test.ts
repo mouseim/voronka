@@ -168,6 +168,65 @@ describe('PostgreSQL import/publish/version integration', () => {
       await database.close()
     }
   })
+
+  it('публикует из редактора с авто-версиями, готовыми платежами и закреплёнными сессиями', async () => {
+    const database = await PGlite.create({ extensions: { pgcrypto } })
+    const pool = pglitePool(database)
+    try {
+      await applyMigrations(database)
+      await database.exec(`
+        INSERT INTO payment_integrations(provider, shop_id, secret_ciphertext, secret_iv, secret_auth_tag, verified_at)
+        VALUES ('yookassa_api', 'shop', decode('00', 'hex'), decode('00', 'hex'), decode('00', 'hex'), now())
+      `)
+      const store = new PostgresRuntimeStore(pool)
+      const admin = new AdminRepository(pool, store)
+      const document = await loadDemo()
+
+      const blocked = await admin.publishFromEditor(document, '1')
+      expect(blocked.published).toBe(false)
+      expect(blocked.issues.some((issue) => issue.code === 'runtime_media_binding_missing')).toBe(true)
+      for (const asset of document.assets) {
+        await admin.bindMedia(blocked.versionId, asset.id, { type: asset.type, fileId: `file-${asset.id}` }, '1')
+      }
+      const sharedAsset = document.assets[0]!
+      await admin.bindVkMedia(blocked.versionId, sharedAsset.id, {
+        type: sharedAsset.type === 'image' ? 'photo' : 'doc', ownerId: -1, mediaId: 10,
+      }, '1')
+
+      const first = await admin.publishFromEditor(document, '1')
+      expect(first).toMatchObject({ published: true, created: false })
+      expect(first.document.funnel.version).toBe(1)
+      const product = await database.query<{ provider: string; amount_minor: number }>(
+        'SELECT provider, amount_minor FROM runtime_product_configs WHERE version_id = $1', [first.versionId],
+      )
+      expect(product.rows[0]).toMatchObject({ provider: 'yookassa_api', amount_minor: 149000 })
+
+      const user = await store.upsertUser(profile)
+      const oldSession = await store.createSession({
+        userId: user.id, funnelId: first.funnelId, versionId: first.versionId,
+        status: 'active', currentNodeId: document.funnel.startNodeId, state: {},
+      })
+      const changed = structuredClone(first.document)
+      const message = changed.nodes.find((node) => node.type === 'message')!
+      message.data.title = `${message.data.title} — обновлено`
+      changed.editor.nodePositions[message.id] = { x: 999, y: 999 }
+
+      const second = await admin.publishFromEditor(changed, '1')
+      expect(second).toMatchObject({ published: true, created: true })
+      expect(second.document.funnel.version).toBe(2)
+      expect(await store.getMediaBinding(second.versionId, sharedAsset.id, 'telegram')).not.toBeNull()
+      expect(await store.getMediaBinding(second.versionId, sharedAsset.id, 'vk')).not.toBeNull()
+      expect((await store.getSession(oldSession.id))?.versionId).toBe(first.versionId)
+
+      const layoutOnly = structuredClone(second.document)
+      layoutOnly.editor.nodePositions[message.id] = { x: 1, y: 2 }
+      const repeated = await admin.publishFromEditor(layoutOnly, '1')
+      expect(repeated).toMatchObject({ published: true, created: false, versionId: second.versionId })
+      expect((await store.resolveVersion())?.version.id).toBe(second.versionId)
+    } finally {
+      await database.close()
+    }
+  })
 })
 
 async function configureAndBind(admin: AdminRepository, versionId: string, document: Awaited<ReturnType<typeof loadDemo>>) {

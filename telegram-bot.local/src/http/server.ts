@@ -4,9 +4,12 @@ import type { Logger } from 'pino'
 import type { AppConfig } from '../config'
 import type { DatabasePool } from '../db/pool'
 import type { FunnelEngine } from '../runtime/engine'
+import type { AdminRepository } from '../admin/repository'
+import { parseAndMigrateFunnelDocument, validateFunnel } from '../core/shared'
 import { verifyAdminToken, type YooKassaIntegrationRepository, type YooKassaPaymentService } from '../payments/yookassa'
 
 interface PaymentHttpDependencies {
+  adminRepository?: AdminRepository
   integration?: YooKassaIntegrationRepository
   payments?: YooKassaPaymentService
   acceptYooKassaPayment(providerPaymentId: string): Promise<void>
@@ -61,7 +64,7 @@ export function createHttpServer(
   })
 
   app.addHook('onRequest', async (request, reply) => {
-    if (!request.url.startsWith('/admin/integrations/')) return
+    if (!request.url.startsWith('/admin/integrations/') && !request.url.startsWith('/admin/editor/')) return
     const origin = request.headers.origin?.replace(/\/$/, '')
     if (origin && config.editorOrigins.includes(origin)) {
       reply.header('Access-Control-Allow-Origin', origin)
@@ -97,6 +100,53 @@ export function createHttpServer(
       return { ok: true, status: await paymentDependencies.integration?.status() }
     } catch {
       return reply.code(422).send({ ok: false, error: 'credentials_check_failed' })
+    }
+  })
+
+  app.post<{ Body: unknown }>('/admin/editor/publish', async (request, reply) => {
+    if (!paymentDependencies?.adminRepository) return reply.code(503).send({
+      error: 'publishing_unavailable',
+      message: 'Публикация из конструктора сейчас недоступна.',
+    })
+    const adminId = config.adminIds.values().next().value
+    if (!adminId) return reply.code(503).send({
+      error: 'administrator_unavailable',
+      message: 'На сервере не настроен администратор для журнала публикаций.',
+    })
+    const parsed = parseAndMigrateFunnelDocument(request.body)
+    if (!parsed.success) return reply.code(400).send({
+      error: 'invalid_document',
+      message: 'Воронка содержит некорректные данные.',
+      issues: parsed.errors.map((message) => ({ severity: 'error', section: 'document', code: 'invalid_document', message })),
+    })
+    const documentIssues = validateFunnel(parsed.document)
+    if (documentIssues.some((issue) => issue.severity === 'error')) return reply.code(422).send({
+      error: 'publication_blocked',
+      message: 'Исправьте ошибки перед публикацией.',
+      issues: documentIssues,
+    })
+    try {
+      const result = await paymentDependencies.adminRepository.publishFromEditor(parsed.document, adminId)
+      if (!result.published) return reply.code(422).send({
+        error: 'publication_blocked',
+        message: 'Исправьте ошибки перед публикацией.',
+        issues: result.issues,
+        version: result.document.funnel.version,
+      })
+      return {
+        published: true,
+        created: result.created,
+        unchanged: !result.created,
+        version: result.document.funnel.version,
+        document: result.document,
+        issues: result.issues,
+      }
+    } catch (error) {
+      request.log.error({ err: error }, 'Не удалось опубликовать воронку из конструктора')
+      return reply.code(500).send({
+        error: 'publication_failed',
+        message: 'Не удалось опубликовать воронку. Повторите попытку или воспользуйтесь Telegram-админкой.',
+      })
     }
   })
 

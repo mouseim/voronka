@@ -31,6 +31,7 @@ import {
   Package,
   PanelRight,
   Redo2,
+  Rocket,
   Search,
   Undo2,
 } from 'lucide-react'
@@ -39,6 +40,7 @@ import { analyticsForNode, createNewVersion, edgeLabel, nodePosition } from '../
 import type { FunnelDocument, NodeType, ValidationIssue, WorkspaceSection } from '../model/types'
 import { validateFunnel } from '../model/validation'
 import { downloadFunnel, importFunnelFile } from '../services/files'
+import { integrationConnection, publishFunnel, RuntimeRequestError } from '../services/integrations'
 import { useEditorStore } from '../store/editor'
 import { BlockLibrary } from './BlockLibrary'
 import { FunnelNodeCard, type FunnelCanvasNode } from './FunnelNodeCard'
@@ -96,6 +98,7 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave }: Ed
   const [mobilePanel, setMobilePanel] = useState<'library' | 'properties' | null>(null)
   const [nodeSearch, setNodeSearch] = useState('')
   const [selectionArmed, setSelectionArmed] = useState(false)
+  const [publication, setPublication] = useState<{ state: 'idle' | 'publishing' | 'success' | 'error'; message?: string }>({ state: 'idle' })
   const canvasRef = useRef<HTMLDivElement>(null)
 
   const nodes: FunnelCanvasNode[] = useMemo(() => document.nodes.map((node) => ({
@@ -158,10 +161,27 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave }: Ed
     setCenter(position.x + 100, position.y + 40, { zoom: 1, duration: 350 })
   }
   const check = () => setIssues(validateFunnel(document))
-  const exportCurrent = () => {
+  const publishCurrent = async () => {
     const found = validateFunnel(document)
     if (found.some((issue) => issue.severity === 'error')) { setIssues(found); return }
-    downloadFunnel(document)
+    const connection = integrationConnection()
+    if (!connection.runtimeUrl || !connection.adminToken) {
+      setPublication({ state: 'error', message: 'Сначала подключите runtime в разделе «Интеграции».' })
+      return
+    }
+    setPublication({ state: 'publishing' })
+    try {
+      const result = await publishFunnel(document)
+      await onSave(result.document)
+      setDocument(result.document)
+      setPublication({
+        state: 'success',
+        message: `✓ Опубликовано. Telegram и VK используют версию ${result.version} для новых пользователей.${result.unchanged ? ' Содержимое не изменилось, новая версия не создавалась.' : ''}`,
+      })
+    } catch (error) {
+      if (error instanceof RuntimeRequestError && error.issues.length) setIssues(error.issues)
+      setPublication({ state: 'error', message: error instanceof Error ? error.message : 'Не удалось опубликовать воронку.' })
+    }
   }
   const createVersion = async () => {
     setMoreOpen(false)
@@ -217,9 +237,10 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave }: Ed
       <button className="header-action mobile-only" aria-label="Настройки этапа" onClick={() => setMobilePanel('properties')}><PanelRight size={18} /><span>Настройки</span></button>
       <button className="header-action" onClick={check}><CheckCircle2 size={18} /><span>Проверить</span></button>
       <button className="header-action" onClick={() => setPreview(true)}><Eye size={18} /><span>Предпросмотр</span></button>
-      <button className="button primary export-button" aria-label="Скачать файл для бота" onClick={exportCurrent}><Download size={17} /><span>Скачать файл для бота</span></button>
+      <button className="button primary export-button" aria-label="Опубликовать в Telegram и VK" disabled={publication.state === 'publishing'} onClick={() => void publishCurrent()}><Rocket size={17} /><span>{publication.state === 'publishing' ? 'Публикуем…' : 'Опубликовать'}</span></button>
       <div className="export-menu-wrap"><button className="icon-button bordered" onClick={() => setMoreOpen(!moreOpen)} aria-label="Ещё"><Ellipsis size={19} /></button>{moreOpen && <div className="export-menu more-menu"><button onClick={createVersion}><Copy size={16} /><span><strong>Создать новую версию</strong><small>Со статистикой с нуля</small></span></button><button onClick={() => { setMoreOpen(false); downloadFunnel(document, `backup-v${document.funnel.version}`) }}><Download size={16} /><span><strong>Резервная копия</strong><small>Текущая версия целиком</small></span></button><label><FileImage size={16} /><span><strong>Импортировать другой файл</strong><small>Формат 3.0 и автоматический импорт 2.0</small></span><input type="file" accept=".funnel,.json" hidden onChange={(event) => importAnother(event.target.files?.[0])} /></label><button onClick={() => { setMoreOpen(false); alert(`Формат файла: ${document.schemaVersion}\nВерсия воронки: ${document.funnel.version}\nБлоков: ${document.nodes.length}\nСвязей: ${document.edges.length}`) }}><CheckCircle2 size={16} /><span><strong>Сведения о файле</strong><small>Версия формата и состав</small></span></button></div>}</div>
     </header>
+    {publication.state !== 'idle' && <div className={`publish-status ${publication.state}`}><span>{publication.message ?? 'Проверяем и публикуем общую версию для Telegram и VK…'}</span>{publication.state === 'error' && (!integrationConnection().runtimeUrl || !integrationConnection().adminToken) && <button className="button" onClick={() => onWorkspace('integrations')}>Открыть интеграции</button>}</div>}
     <div className="editor-layout">
       <BlockLibrary onAdd={addAtCenter} hasStart={document.nodes.some((node) => node.type === 'start')} />
       <main className="canvas-wrap" ref={canvasRef} onDrop={onDrop} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move' }}>

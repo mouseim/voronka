@@ -2,6 +2,7 @@ import pino from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 import { loadConfig } from '../src/config'
 import { createHttpServer } from '../src/http/server'
+import { loadDemo } from './helpers'
 
 describe('payment HTTP boundary', () => {
   it('защищает admin API, ограничивает CORS и не возвращает секрет', async () => {
@@ -37,11 +38,57 @@ describe('payment HTTP boundary', () => {
       expect(accept).toHaveBeenCalledWith('provider-42')
     } finally { await app.close() }
   })
+
+  it('защищает прямую публикацию, проверяет документ и возвращает синхронизированную версию', async () => {
+    const document = await loadDemo()
+    const publishFromEditor = vi.fn(async () => ({
+      published: true as const,
+      created: true,
+      versionId: 'version-id',
+      funnelId: 'funnel-id',
+      document: { ...document, funnel: { ...document.funnel, version: 4, status: 'published' as const } },
+      issues: [],
+    }))
+    const app = server({ adminRepository: { publishFromEditor } })
+    try {
+      expect((await app.inject({ method: 'POST', url: '/admin/editor/publish', payload: document })).statusCode).toBe(401)
+      expect((await app.inject({
+        method: 'OPTIONS', url: '/admin/editor/publish', headers: { origin: 'https://evil.test' },
+      })).statusCode).toBe(403)
+      const invalid = await app.inject({
+        method: 'POST', url: '/admin/editor/publish', headers: { authorization: 'Bearer admin-token-long' }, payload: {},
+      })
+      expect(invalid.statusCode).toBe(400)
+      expect(invalid.json()).toMatchObject({ error: 'invalid_document' })
+      const noProvider = structuredClone(document)
+      delete noProvider.products[0]!.paymentProvider
+      const providerBlocked = await app.inject({
+        method: 'POST', url: '/admin/editor/publish', headers: { authorization: 'Bearer admin-token-long' }, payload: noProvider,
+      })
+      expect(providerBlocked.statusCode).toBe(422)
+      expect(providerBlocked.json()).toMatchObject({
+        error: 'publication_blocked',
+        issues: [expect.objectContaining({ code: 'payment_provider_missing' })],
+      })
+
+      const response = await app.inject({
+        method: 'POST', url: '/admin/editor/publish',
+        headers: { authorization: 'Bearer admin-token-long', origin: 'http://localhost:5173' },
+        payload: document,
+      })
+      expect(response.statusCode).toBe(200)
+      expect(response.headers['access-control-allow-origin']).toBe('http://localhost:5173')
+      expect(response.json()).toMatchObject({ published: true, created: true, unchanged: false, version: 4 })
+      expect(publishFromEditor).toHaveBeenCalledWith(expect.objectContaining({ documentType: 'funnel' }), '1')
+      expect(response.body).not.toContain('secretKey')
+    } finally { await app.close() }
+  })
 })
 
 function server(dependencies: Record<string, unknown>) {
   const config = loadConfig({
     TELEGRAM_BOT_TOKEN: 'token', DATABASE_URL: 'postgresql://localhost/test',
+    ADMIN_TELEGRAM_IDS: '1',
     EDITOR_ADMIN_TOKEN: 'admin-token-long', EDITOR_ORIGINS: 'http://localhost:5173',
   })
   const pool = { query: async () => ({ rows: [], rowCount: 1 }) }

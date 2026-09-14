@@ -90,6 +90,15 @@ export function validateFunnel(document: FunnelDocument): ValidationIssue[] {
     })
   })
 
+  document.products.filter((product) => product.active).forEach((product) => {
+    if (!product.paymentProvider) add({
+      severity: 'error',
+      section: 'products',
+      code: 'payment_provider_missing',
+      message: `Для продукта «${product.name || 'Без названия'}» выберите способ оплаты.`,
+    })
+  })
+
   document.assets.forEach((asset) => {
     if (!asset.logicalRef.trim()) add({ severity: asset.required ? 'warning' : 'advice', section: 'media', code: 'asset_empty', message: `Для материала «${asset.name}» ещё не заполнена логическая ссылка.` })
     const vkRef = asset.platformRefs?.vk?.trim()
