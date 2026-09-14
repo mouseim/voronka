@@ -150,6 +150,24 @@ export function createHttpServer(
     }
   })
 
+  app.get('/admin/editor/funnels', async (_request, reply) => {
+    if (!paymentDependencies?.adminRepository) return reply.code(503).send({
+      error: 'sync_unavailable', message: 'Загрузка опубликованных воронок сейчас недоступна.',
+    })
+    return { funnels: await paymentDependencies.adminRepository.listEditorFunnels() }
+  })
+
+  app.get<{ Params: { id: string } }>('/admin/editor/funnels/:id', async (request, reply) => {
+    if (!paymentDependencies?.adminRepository) return reply.code(503).send({
+      error: 'sync_unavailable', message: 'Загрузка опубликованной воронки сейчас недоступна.',
+    })
+    const document = await paymentDependencies.adminRepository.getEditorFunnel(request.params.id)
+    if (!document) return reply.code(404).send({
+      error: 'funnel_not_found', message: 'Опубликованная воронка не найдена.',
+    })
+    return { document }
+  })
+
   if (config.botMode === 'webhook') {
     app.post('/telegram/webhook', webhookCallback(bot, 'fastify', {
       secretToken: config.webhookSecret!,

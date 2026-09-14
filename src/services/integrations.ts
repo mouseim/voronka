@@ -14,6 +14,16 @@ export interface PublishFunnelResponse {
   issues: import('../model/types').ValidationIssue[]
 }
 
+export interface ServerFunnelSummary {
+  id: string
+  name: string
+  activeVersion: number
+  updatedAt: string
+  publishedAt: string | null
+  isDefault: boolean
+  nodeCount: number
+}
+
 export class RuntimeRequestError extends Error {
   constructor(message: string, readonly issues: import('../model/types').ValidationIssue[] = []) {
     super(message)
@@ -35,12 +45,21 @@ export function setIntegrationConnection(next: { runtimeUrl: string; adminToken:
   browserStorage?.localStorage.setItem('voronka.runtimeUrl', runtimeUrl)
   if (adminToken) browserStorage?.sessionStorage.setItem('voronka.adminToken', adminToken)
   else browserStorage?.sessionStorage.removeItem('voronka.adminToken')
+  if (typeof browserStorage?.dispatchEvent === 'function') browserStorage.dispatchEvent(new Event('voronka:connection-changed'))
 }
 
 export async function publishFunnel(document: import('../model/types').FunnelDocument) {
   return request<PublishFunnelResponse>('/admin/editor/publish', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(document),
   })
+}
+
+export async function getServerFunnels() {
+  return (await request<{ funnels: ServerFunnelSummary[] }>('/admin/editor/funnels')).funnels
+}
+
+export async function getServerFunnel(id: string) {
+  return (await request<{ document: import('../model/types').FunnelDocument }>(`/admin/editor/funnels/${encodeURIComponent(id)}`)).document
 }
 
 export async function getYooKassaStatus() {

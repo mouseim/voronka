@@ -177,6 +177,8 @@ tests / assets / products / analytics / editor
 
 Архитектурное решение 3.0: [`docs/ADR-003-simple-logic-3.0.md`](docs/ADR-003-simple-logic-3.0.md). История упрощения 2.0: [`docs/ADR-002-simplified-funnel-2.0.md`](docs/ADR-002-simplified-funnel-2.0.md). Сценарий ручной проверки: [`docs/WORKFLOW.md`](docs/WORKFLOW.md).
 
+Практические инструкции: [`docs/USER-GUIDE.md`](docs/USER-GUIDE.md) для пользователя и [`docs/PRODUCTION.md`](docs/PRODUCTION.md) для владельца production.
+
 ## Осознанные ограничения
 
 - Веб-редактор не публикует изменения в Telegram runtime автоматически: файл `.funnel` импортируется через Telegram-админку.

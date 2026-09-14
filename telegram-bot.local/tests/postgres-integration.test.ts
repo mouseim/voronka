@@ -223,6 +223,16 @@ describe('PostgreSQL import/publish/version integration', () => {
       const repeated = await admin.publishFromEditor(layoutOnly, '1')
       expect(repeated).toMatchObject({ published: true, created: false, versionId: second.versionId })
       expect((await store.resolveVersion())?.version.id).toBe(second.versionId)
+
+      const listed = await admin.listEditorFunnels()
+      expect(listed).toEqual([expect.objectContaining({
+        id: document.funnel.id, activeVersion: 2, isDefault: true, nodeCount: document.nodes.length,
+      })])
+      const downloaded = await admin.getEditorFunnel(document.funnel.id)
+      expect(downloaded).toMatchObject({ funnel: { id: document.funnel.id, version: 2, status: 'published' } })
+      expect(downloaded?.analytics.contacts).toEqual([])
+      expect(downloaded?.analytics.applications).toEqual([])
+      expect(await admin.getEditorFunnel('missing')).toBeNull()
     } finally {
       await database.close()
     }

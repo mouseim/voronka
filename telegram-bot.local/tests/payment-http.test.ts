@@ -83,6 +83,38 @@ describe('payment HTTP boundary', () => {
       expect(response.body).not.toContain('secretKey')
     } finally { await app.close() }
   })
+
+  it('отдаёт только список и активный документ через защищённый editor API', async () => {
+    const document = await loadDemo()
+    document.analytics.contacts = [{ id: 'private-contact', email: 'hidden@example.test' }]
+    const app = server({
+      adminRepository: {
+        listEditorFunnels: async () => [{ id: document.funnel.id, name: document.funnel.name, activeVersion: 3, updatedAt: '2026-09-14T00:00:00.000Z', publishedAt: '2026-09-14T00:00:00.000Z', isDefault: true, nodeCount: document.nodes.length }],
+        getEditorFunnel: async (id: string) => id === document.funnel.id ? { ...document, analytics: { ...document.analytics, contacts: [], applications: [] } } : null,
+      },
+    })
+    try {
+      expect((await app.inject({ method: 'GET', url: '/admin/editor/funnels' })).statusCode).toBe(401)
+      const list = await app.inject({
+        method: 'GET', url: '/admin/editor/funnels',
+        headers: { authorization: 'Bearer admin-token-long', origin: 'http://localhost:5173' },
+      })
+      expect(list.statusCode).toBe(200)
+      expect(list.headers['access-control-allow-origin']).toBe('http://localhost:5173')
+      expect(list.json()).toMatchObject({ funnels: [expect.objectContaining({ id: document.funnel.id, activeVersion: 3 })] })
+      const active = await app.inject({
+        method: 'GET', url: `/admin/editor/funnels/${document.funnel.id}`,
+        headers: { authorization: 'Bearer admin-token-long' },
+      })
+      expect(active.statusCode).toBe(200)
+      expect(active.json()).toMatchObject({ document: { documentType: 'funnel', funnel: { id: document.funnel.id } } })
+      expect(active.body).not.toContain('hidden@example.test')
+      expect(active.body).not.toMatch(/secretKey|EDITOR_ADMIN_TOKEN|TELEGRAM_BOT_TOKEN|VK_GROUP_TOKEN/)
+      expect((await app.inject({
+        method: 'GET', url: '/admin/editor/funnels/missing', headers: { authorization: 'Bearer admin-token-long' },
+      })).statusCode).toBe(404)
+    } finally { await app.close() }
+  })
 })
 
 function server(dependencies: Record<string, unknown>) {

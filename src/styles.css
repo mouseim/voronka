@@ -53,6 +53,9 @@ code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monosp
 .home-brand small { margin-top: 4px; font-size: 10px; color: #838a98; letter-spacing: .04em; }
 .offline-pill { font-size: 11px; font-weight: 650; color: #5f6877; border: 1px solid #e0e4ea; background: rgba(255,255,255,.72); border-radius: 999px; padding: 7px 11px; display: inline-flex; align-items: center; gap: 7px; }
 .offline-pill i { width: 7px; height: 7px; border-radius: 50%; background: #2ba478; box-shadow: 0 0 0 3px rgba(43,164,120,.1); }
+.sync-pill { cursor: pointer; }
+.sync-pill.idle i, .sync-pill.error i { background: #c47a35; box-shadow: 0 0 0 3px rgba(196,122,53,.1); }
+.sync-pill.loading i { background: #5973de; box-shadow: 0 0 0 3px rgba(89,115,222,.1); }
 .home-content { max-width: 1124px; padding: 60px 28px 72px; margin: 0 auto; }
 .welcome-section { min-height: 260px; display: grid; grid-template-columns: 1.1fr .9fr; gap: 70px; align-items: center; }
 .welcome-copy .eyebrow { color: var(--primary); background: #eef1ff; border-radius: 999px; padding: 7px 10px; }
@@ -89,6 +92,11 @@ code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monosp
 .drafts-heading { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 18px; border-bottom: 1px solid #e1e4eb; }
 .drafts-heading h2 { font-size: 24px; margin: 6px 0 0; letter-spacing: -.02em; }
 .drafts-heading > span { font-size: 12px; color: #7d8493; }
+.draft-heading-actions { display: flex; align-items: center; gap: 8px; }
+.draft-heading-actions > span { color: #7d8493; font-size: 12px; }
+.draft-heading-actions .button { min-height: 34px; }
+.sync-message { margin: 12px 0; padding: 10px 12px; border-radius: 9px; color: #52616f; background: #f1f4f8; font-size: 10px; }
+.sync-message.error { color: #9a4148; background: #fff0f1; }
 .draft-tools { margin: 18px 0 12px; display: grid; grid-template-columns: 1fr 180px 190px; gap: 8px; }
 .draft-tools label { min-height: 38px; padding: 0 10px; border: 1px solid #dfe3e9; border-radius: 9px; background: #fff; display: flex; align-items: center; gap: 7px; color: #9aa1ad; }
 .draft-tools input { width: 100%; border: 0; outline: 0; color: #525b68; font-size: 10px; }
@@ -105,6 +113,10 @@ code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monosp
 .draft-delete { margin-left: auto; }
 .draft-card h3 { margin: 18px 0 12px; font-size: 15px; min-height: 36px; line-height: 1.25; }
 .draft-key { display: block; margin: -7px 0 9px; color: #9aa0aa; font-size: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.draft-location { min-height: 20px; margin: -7px 0 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+.draft-location span { padding: 3px 6px; border-radius: 999px; color: #737b87; background: #f0f2f5; font-size: 8px; font-weight: 650; }
+.draft-location span.server { color: #286f5d; background: #e9f7f2; }
+.server-card { border-color: #d5e7e0; }
 .draft-health { margin-bottom: 10px; display: flex; align-items: center; gap: 7px; color: #959ca7; font-size: 8px; }
 .draft-health span { display: inline-flex; align-items: center; gap: 3px; }
 .draft-health .error { color: #bd5057; }.draft-health .warning { color: #ad7134; }.draft-health .ok { color: #32866e; }
@@ -295,6 +307,8 @@ code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monosp
 .dialog h2 { font-size: 21px; letter-spacing: -.02em; margin: 0 0 9px; }
 .dialog-lead { color: #7b8391; font-size: 12px; line-height: 1.55; margin: 0 auto; max-width: 410px; }
 .dialog-actions { margin-top: 22px; display: flex; justify-content: flex-end; gap: 8px; }
+.runtime-dialog .field { text-align: left; }
+.conflict-dialog { max-width: 520px; }
 .issue-list { margin-top: 20px; max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; text-align: left; }
 .issue-row { width: 100%; border: 1px solid #e5e7ec; background: #fff; border-radius: 10px; padding: 10px; display: flex; align-items: flex-start; gap: 9px; text-align: left; cursor: pointer; }
 .issue-row:hover { background: #fafbfc; }

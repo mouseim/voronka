@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import path from 'node:path'
+import { freshDemoFunnel } from '../src/model/demo'
 
 test('упрощённое демо открывает схему, тесты, предпросмотр и источники', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'Основной desktop-сценарий')
@@ -90,4 +91,92 @@ test('мобильный интерфейс даёт доступ к блока�
   await page.getByRole('button', { name: 'Тесты' }).click()
   await expect(page.getByRole('heading', { name: 'Психологические тесты' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Вопросы' })).toBeVisible()
+})
+
+test('чистый браузер загружает VPS-воронку, сохраняет её и разрешает конфликт без потери локальной работы', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === 'mobile', 'Сценарий второго устройства проверяется один раз')
+  let serverDocument = freshDemoFunnel()
+  serverDocument.funnel.status = 'published'
+  let publishCount = 0
+  await page.route('https://runtime.example/**', async (route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    if (request.method() === 'GET' && url.pathname === '/admin/editor/funnels') {
+      return route.fulfill({ json: { funnels: [{
+        id: serverDocument.funnel.id,
+        name: serverDocument.funnel.name,
+        activeVersion: serverDocument.funnel.version,
+        updatedAt: serverDocument.funnel.updatedAt,
+        publishedAt: serverDocument.funnel.updatedAt,
+        isDefault: true,
+        nodeCount: serverDocument.nodes.length,
+      }] } })
+    }
+    if (request.method() === 'GET' && url.pathname.startsWith('/admin/editor/funnels/')) {
+      return route.fulfill({ json: { document: serverDocument } })
+    }
+    if (request.method() === 'POST' && url.pathname === '/admin/editor/publish') {
+      const submitted = request.postDataJSON() as typeof serverDocument
+      const changed = submitted.funnel.name !== serverDocument.funnel.name
+      if (changed) serverDocument = { ...submitted, funnel: { ...submitted.funnel, version: serverDocument.funnel.version + 1, status: 'published' } }
+      publishCount += 1
+      return route.fulfill({ json: {
+        published: true,
+        created: changed,
+        unchanged: !changed,
+        version: serverDocument.funnel.version,
+        document: serverDocument,
+        issues: [],
+      } })
+    }
+    return route.fulfill({ status: 404, json: { message: 'Не найдено' } })
+  })
+
+  await page.goto('/')
+  await page.locator('.primary-actions').getByRole('button', { name: /Подключить мои воронки/ }).click()
+  const connection = page.getByRole('dialog', { name: 'Подключить мои воронки' })
+  await connection.getByLabel('Адрес').fill('https://runtime.example')
+  await connection.getByLabel('Токен доступа').fill('test-admin-token-long')
+  await connection.getByRole('button', { name: 'Подключить', exact: true }).click()
+  const serverCard = page.locator('.server-card')
+  await expect(serverCard.getByText('На сервере · основная')).toBeVisible()
+  await serverCard.getByRole('button', { name: 'Открыть' }).click()
+  await expect(page.getByLabel('Название воронки')).toHaveValue(serverDocument.funnel.name)
+
+  await page.locator('.brand-button').click()
+  await expect(page.getByText('На этом устройстве', { exact: true })).toBeVisible()
+  await page.locator('.draft-card').getByRole('button', { name: 'Открыть' }).click()
+  await expect(page.getByLabel('Название воронки')).toBeVisible()
+  await page.getByLabel('Название воронки').fill('Локальная несохранённая правка')
+  await page.waitForTimeout(1_000)
+  await page.locator('.brand-button').click()
+  await page.locator('.draft-card').getByRole('button', { name: 'Открыть' }).click()
+  const conflict = page.getByRole('dialog', { name: 'Есть изменения на этом устройстве' })
+  await expect(conflict).toBeVisible()
+  await conflict.getByRole('button', { name: 'Продолжить локальную версию' }).click()
+  await expect(page.getByLabel('Название воронки')).toHaveValue('Локальная несохранённая правка')
+
+  await page.locator('.brand-button').click()
+  await page.locator('.draft-card').getByRole('button', { name: 'Открыть' }).click()
+  await page.getByRole('dialog', { name: 'Есть изменения на этом устройстве' }).getByRole('button', { name: 'Загрузить опубликованную версию' }).click()
+  await expect(page.getByLabel('Название воронки')).toHaveValue(serverDocument.funnel.name)
+  await page.getByLabel('Название воронки').fill('Опубликовано со второго устройства')
+  await page.getByRole('button', { name: 'Опубликовать в Telegram и VK' }).click()
+  await expect(page.getByText(/Опубликовано в Telegram и VK: версия 2/)).toBeVisible()
+  await page.getByRole('button', { name: 'Опубликовать в Telegram и VK' }).click()
+  await expect(page.getByText(/новая версия не создавалась/)).toBeVisible()
+  expect(publishCount).toBe(2)
+
+  await page.reload()
+  await expect(page.locator('.draft-card').getByText('Опубликовано со второго устройства', { exact: true })).toBeVisible()
+  const stored = await page.evaluate(async () => new Promise<number>((resolve, reject) => {
+    const open = indexedDB.open('voronka-funnel-builder', 2)
+    open.onerror = () => reject(open.error)
+    open.onsuccess = () => {
+      const request = open.result.transaction('drafts', 'readonly').objectStore('drafts').getAll()
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => resolve(request.result.filter((draft) => draft.document?.funnel?.version === 2).length)
+    }
+  }))
+  expect(stored).toBeGreaterThan(0)
 })

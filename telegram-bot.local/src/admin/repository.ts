@@ -363,6 +363,43 @@ export class AdminRepository {
     return result.rows
   }
 
+  async listEditorFunnels() {
+    const result = await this.pool.query<EditorFunnelRow>(`
+      SELECT f.source_funnel_id, f.name, f.default_for_bot, f.updated_at,
+             fv.version AS active_version, fv.published_at,
+             jsonb_array_length(fv.raw_document->'nodes')::int AS node_count
+      FROM funnels f
+      JOIN funnel_versions fv ON fv.id = f.active_version_id
+      WHERE fv.status = 'published'
+      ORDER BY f.updated_at DESC
+    `)
+    return result.rows.map((row) => ({
+      id: row.source_funnel_id,
+      name: row.name,
+      activeVersion: row.active_version,
+      updatedAt: new Date(row.updated_at).toISOString(),
+      publishedAt: row.published_at ? new Date(row.published_at).toISOString() : null,
+      isDefault: row.default_for_bot,
+      nodeCount: row.node_count,
+    }))
+  }
+
+  async getEditorFunnel(sourceFunnelId: string) {
+    const result = await this.pool.query<{ raw_document: FunnelDocument; version: number }>(`
+      SELECT fv.raw_document, fv.version
+      FROM funnels f
+      JOIN funnel_versions fv ON fv.id = f.active_version_id
+      WHERE f.source_funnel_id = $1 AND fv.status = 'published'
+    `, [sourceFunnelId])
+    const row = result.rows[0]
+    if (!row) return null
+    const document = structuredClone(row.raw_document)
+    document.funnel.version = row.version
+    document.funnel.status = 'published'
+    document.analytics = emptyAnalytics(row.version)
+    return document
+  }
+
   async listVersions(funnelId: string) {
     const result = await this.pool.query<VersionListRow>(`
       SELECT fv.id, fv.version, fv.status, fv.content_hash, fv.imported_at, fv.published_at,
@@ -588,6 +625,16 @@ interface FunnelListRow extends QueryResultRow {
   active_version: number | null
   versions: number
   active_sessions: number
+}
+
+interface EditorFunnelRow extends QueryResultRow {
+  source_funnel_id: string
+  name: string
+  default_for_bot: boolean
+  updated_at: Date | string
+  active_version: number
+  published_at: Date | string | null
+  node_count: number
 }
 
 interface VersionListRow extends QueryResultRow {

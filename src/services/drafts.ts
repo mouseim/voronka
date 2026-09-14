@@ -1,4 +1,5 @@
 import { parseAndMigrateFunnelDocument } from '../model/schema'
+import { emptyAnalytics } from '../model/funnel'
 import type { DraftRevision, DraftSummary, FunnelDocument } from '../model/types'
 import { validateFunnel } from '../model/validation'
 
@@ -122,4 +123,25 @@ export async function getRevisions(draftId: string): Promise<DraftRevision[]> {
 export async function clearRevisions(draftId: string): Promise<void> {
   const revisions = await getRevisions(draftId)
   for (const revision of revisions) await requestFromStore(REVISIONS_STORE, 'readwrite', (store) => store.delete(revision.id))
+}
+
+export function documentsMatchForSync(left: FunnelDocument, right: FunnelDocument) {
+  return canonicalJson(syncComparable(left)) === canonicalJson(syncComparable(right))
+}
+
+function syncComparable(source: FunnelDocument) {
+  const document = structuredClone(source)
+  document.funnel.status = 'published'
+  document.funnel.updatedAt = ''
+  document.analytics = emptyAnalytics(document.funnel.version)
+  return document
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
 }
