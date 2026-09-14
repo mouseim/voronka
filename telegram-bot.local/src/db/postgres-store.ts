@@ -382,7 +382,38 @@ export class PostgresRuntimeStore implements RuntimeStore {
     return result.rows[0] ? mapPayment(result.rows[0]) : null
   }
 
-  async markPaymentPaid(paymentId: string, telegramChargeId: string, providerChargeId?: string) {
+  async getPayment(paymentId: string) {
+    const result = await this.pool.query<PaymentRow>('SELECT * FROM payments WHERE id = $1', [paymentId])
+    return result.rows[0] ? mapPayment(result.rows[0]) : null
+  }
+
+  async getPaymentByProviderId(provider: PaymentRecord['provider'], providerPaymentId: string) {
+    const result = await this.pool.query<PaymentRow>('SELECT * FROM payments WHERE provider = $1 AND provider_payment_id = $2', [provider, providerPaymentId])
+    return result.rows[0] ? mapPayment(result.rows[0]) : null
+  }
+
+  async attachProviderPayment(paymentId: string, providerPaymentId: string, confirmationUrl: string, providerStatus: string) {
+    const result = await this.pool.query<PaymentRow>(`
+      UPDATE payments SET provider_payment_id = COALESCE(provider_payment_id, $2),
+        confirmation_url = COALESCE(confirmation_url, $3), provider_status = $4
+      WHERE id = $1 AND (provider_payment_id IS NULL OR provider_payment_id = $2)
+      RETURNING *
+    `, [paymentId, providerPaymentId, confirmationUrl, providerStatus])
+    if (!result.rows[0]) throw new Error('PAYMENT_PROVIDER_ID_CONFLICT')
+    return mapPayment(result.rows[0])
+  }
+
+  async updateProviderPaymentStatus(paymentId: string, providerStatus: string, failed = false) {
+    const result = await this.pool.query<PaymentRow>(`
+      UPDATE payments SET provider_status = $2,
+        status = CASE WHEN $3 AND status <> 'paid' THEN 'failed' ELSE status END
+      WHERE id = $1 RETURNING *
+    `, [paymentId, providerStatus, failed])
+    if (!result.rows[0]) throw new Error('PAYMENT_NOT_FOUND')
+    return mapPayment(result.rows[0])
+  }
+
+  async markPaymentPaid(paymentId: string, telegramChargeId?: string, providerChargeId?: string) {
     return this.transaction(async (client) => {
       const locked = await client.query<PaymentRow>('SELECT * FROM payments WHERE id = $1 FOR UPDATE', [paymentId])
       const current = locked.rows[0]
@@ -393,9 +424,21 @@ export class PostgresRuntimeStore implements RuntimeStore {
           provider_payment_charge_id = $3, paid_at = now()
         WHERE id = $1
         RETURNING *
-      `, [paymentId, telegramChargeId, providerChargeId ?? null])
+      `, [paymentId, telegramChargeId ?? null, providerChargeId ?? null])
       return { payment: mapPayment(updated.rows[0]!), firstSuccess: true }
     })
+  }
+
+  async claimPaymentFulfillment(paymentId: string) {
+    const result = await this.pool.query(`
+      UPDATE payments SET fulfillment_started_at = now()
+      WHERE id = $1 AND status = 'paid' AND fulfillment_started_at IS NULL
+    `, [paymentId])
+    return Boolean(result.rowCount)
+  }
+
+  async completePaymentFulfillment(paymentId: string) {
+    await this.pool.query('UPDATE payments SET fulfilled_at = now() WHERE id = $1 AND fulfilled_at IS NULL', [paymentId])
   }
 
   async recordPurchase(payment: PaymentRecord) {
@@ -551,6 +594,11 @@ interface PaymentRow extends QueryResultRow {
   amount_minor: number
   currency: string
   status: PaymentRecord['status']
+  provider_payment_id: string | null
+  confirmation_url: string | null
+  provider_status: string | null
+  fulfillment_started_at: Date | string | null
+  fulfilled_at: Date | string | null
 }
 
 function mapUser(row: UserRow): RuntimeUser {
@@ -684,6 +732,11 @@ function mapPayment(row: PaymentRow): PaymentRecord {
     amountMinor: row.amount_minor,
     currency: row.currency,
     status: row.status,
+    providerPaymentId: row.provider_payment_id ?? undefined,
+    confirmationUrl: row.confirmation_url ?? undefined,
+    providerStatus: row.provider_status ?? undefined,
+    fulfillmentStartedAt: row.fulfillment_started_at ? new Date(row.fulfillment_started_at).toISOString() : undefined,
+    fulfilledAt: row.fulfilled_at ? new Date(row.fulfilled_at).toISOString() : undefined,
   }
 }
 

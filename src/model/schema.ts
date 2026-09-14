@@ -115,6 +115,7 @@ const productSchema = z.object({
   active: z.boolean(),
   assetId: z.string().optional(),
   afterPurchaseText: z.string(),
+  paymentProvider: z.enum(['yookassa_api']).optional(),
 }).passthrough()
 
 const variableSchema = z.object({

@@ -16,7 +16,7 @@ export const vkCapabilities: PlatformCapabilities = {
   urlButtons: true,
   media: true,
   mediaTypes: ['image', 'video', 'voice', 'document'],
-  payments: false,
+  payments: true,
 }
 
 export function unsupportedReachableCapability(document: FunnelDocument, capabilities: PlatformCapabilities): string | null {

@@ -109,13 +109,14 @@ export class AdminRepository {
             version_id, product_id, product_type, provider, currency, amount_minor,
             delivery_asset_ids, repeat_policy, after_purchase_text
           )
-          VALUES ($1, $2, 'other', 'unconfigured', 'RUB', $3, $4, 'redeliver', $5)
+          VALUES ($1, $2, 'other', $6, 'RUB', $3, $4, 'redeliver', $5)
         `, [
           versionId,
           product.id,
           Math.round(product.price * 100),
           JSON.stringify(product.assetId ? [product.assetId] : []),
           product.afterPurchaseText,
+          product.paymentProvider ?? 'unconfigured',
         ])
       }
       await client.query(`
@@ -142,6 +143,17 @@ export class AdminRepository {
       installedTrackingCodes: new Set(trackingRows.rows.map((row) => row.code)),
       allowPlaceholders,
     })
+    if (Object.values(configs).some((config) => config.provider === 'yookassa_api')) {
+      const integration = await this.pool.query<{ verified_at: Date | string | null }>("SELECT verified_at FROM payment_integrations WHERE provider = 'yookassa_api'")
+      if (!integration.rows[0]) issues.push({
+        severity: 'error', section: 'products', code: 'yookassa_api_unconfigured',
+        message: 'Для продукта выбрана прямая ЮKassa, но интеграция не подключена.',
+      })
+      else if (!integration.rows[0].verified_at) issues.push({
+        severity: 'error', section: 'products', code: 'yookassa_api_unverified',
+        message: 'Подключение ЮKassa не прошло проверку учетных данных.',
+      })
+    }
     if (!allowPlaceholders) {
       const missing = await this.pool.query<{ asset_id: string; asset_key: string }>(`
         SELECT b.asset_id, b.asset_key
@@ -225,6 +237,7 @@ export class AdminRepository {
   }, adminTelegramId: string) {
     if (input.productType === 'digital' && input.provider === 'yookassa') throw new Error('DIGITAL_REQUIRES_STARS')
     if (input.provider === 'telegram_stars' && input.currency !== 'XTR') throw new Error('STARS_REQUIRES_XTR')
+    if (input.provider === 'yookassa_api' && input.currency !== 'RUB') throw new Error('YOOKASSA_API_REQUIRES_RUB')
     await this.pool.query(`
       UPDATE runtime_product_configs
       SET product_type = $3, provider = $4, currency = $5, amount_minor = $6,

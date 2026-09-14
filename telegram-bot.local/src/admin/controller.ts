@@ -85,14 +85,14 @@ export class AdminController {
         const [versionId, productId, productType, provider, currency, amountRaw, assetsRaw] = args.trim().split(/\s+/)
         const amountMinor = Number(amountRaw)
         if (!versionId || !productId || !['digital', 'service', 'physical', 'other'].includes(productType ?? '')
-          || !['unconfigured', 'mock', 'telegram_stars', 'yookassa'].includes(provider ?? '')
+          || !['unconfigured', 'mock', 'telegram_stars', 'yookassa', 'yookassa_api'].includes(provider ?? '')
           || !currency || !Number.isInteger(amountMinor) || amountMinor < 0) {
-          await ctx.reply('Формат:\n/product VERSION_ID PRODUCT_ID digital|service|physical|other mock|telegram_stars|yookassa|unconfigured RUB|XTR AMOUNT_MINOR [assetId1,assetId2]')
+          await ctx.reply('Формат:\n/product VERSION_ID PRODUCT_ID digital|service|physical|other mock|telegram_stars|yookassa|yookassa_api|unconfigured RUB|XTR AMOUNT_MINOR [assetId1,assetId2]')
           return
         }
         await this.repository.configureProduct(versionId, productId, {
           productType: productType as 'digital' | 'service' | 'physical' | 'other',
-          provider: provider as 'unconfigured' | 'mock' | 'telegram_stars' | 'yookassa',
+          provider: provider as 'unconfigured' | 'mock' | 'telegram_stars' | 'yookassa' | 'yookassa_api',
           currency: currency.toUpperCase(),
           amountMinor,
           deliveryAssetIds: assetsRaw ? assetsRaw.split(',').filter(Boolean) : undefined,

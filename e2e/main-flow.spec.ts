@@ -30,7 +30,7 @@ test('упрощённое демо открывает схему, тесты, �
   await expect.poll(() => firstNode.getAttribute('style')).not.toBe(nodeBeforeDrag)
 
   const selectionStart = { x: paneBox.x + paneBox.width * .85, y: paneBox.y + paneBox.height * .92 }
-  await page.locator('.react-flow__pane').dispatchEvent('click')
+  await page.locator('.react-flow__pane').click({ position: { x: paneBox.width * .85, y: paneBox.height * .92 } })
   await expect(page.locator('.canvas-selection-ready')).toBeVisible()
   await page.mouse.move(selectionStart.x, selectionStart.y)
   await page.mouse.down()

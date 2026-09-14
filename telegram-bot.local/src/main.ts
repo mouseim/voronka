@@ -17,17 +17,22 @@ import { VkLongPollRunner } from './vk/long-poll'
 import { VkTransport } from './vk/transport'
 import { VkUpdateAdapter } from './vk/updates'
 import { VkMediaBindingService } from './vk/media-bindings'
+import { SecretBox, YooKassaIntegrationRepository, YooKassaPaymentService } from './payments/yookassa'
 
 const config = loadConfig()
 const logger = pino({
   level: config.logLevel,
   redact: {
-    paths: ['telegramToken', 'paymentProviderToken', 'vk.token', 'req.headers.authorization', 'req.headers.x-telegram-bot-api-secret-token'],
+    paths: ['telegramToken', 'paymentProviderToken', 'editorAdminToken', 'integrationEncryptionKey', 'vk.token', 'req.headers.authorization', 'req.headers.x-telegram-bot-api-secret-token', 'req.body.secretKey'],
     censor: '[REDACTED]',
   },
 })
 const pool = createPool(config.databaseUrl)
 const store = new PostgresRuntimeStore(pool)
+const yookassaIntegration = config.integrationEncryptionKey
+  ? new YooKassaIntegrationRepository(pool, new SecretBox(config.integrationEncryptionKey))
+  : null
+const directPayments = yookassaIntegration ? new YooKassaPaymentService(store, yookassaIntegration) : undefined
 const bot = new Bot(config.telegramToken)
 const transport = new GrammyTransport(bot, {
   administratorIds: config.adminIds,
@@ -36,6 +41,7 @@ const transport = new GrammyTransport(bot, {
 const engine = new FunnelEngine(store, transport, {
   publicBaseUrl: config.publicBaseUrl,
   paymentProviderToken: config.paymentProviderToken,
+  directPayments,
 })
 const vkRuntime = config.vk ? createVkRuntime(config.vk) : null
 const adminRepository = new AdminRepository(pool, store)
@@ -60,7 +66,21 @@ const worker = createJobWorker(store, {
   },
 }, logger, config.workerPollMs)
 const maintenance = createMaintenanceWorker(pool, logger)
-const server = createHttpServer(config, pool, bot, engine, logger)
+const server = createHttpServer(config, pool, bot, engine, logger, {
+  integration: yookassaIntegration ?? undefined,
+  payments: directPayments,
+  async acceptYooKassaPayment(providerPaymentId) {
+    const payment = await store.getPaymentByProviderId('yookassa_api', providerPaymentId)
+    if (!payment) return
+    const user = await store.getUser(payment.userId)
+    if (user?.platform === 'vk') {
+      if (!vkRuntime) throw new Error('VK_RUNTIME_DISABLED')
+      await vkRuntime.engine.handleDirectPayment(payment.id)
+    } else {
+      await engine.handleDirectPayment(payment.id)
+    }
+  },
+})
 
 let shuttingDown = false
 
@@ -123,7 +143,7 @@ main().catch(async (error) => {
 function createVkRuntime(vk: NonNullable<typeof config.vk>) {
   const api = new VkApiClient(vk.token, vk.groupId, vk.apiVersion)
   const vkTransport = new VkTransport(api, logger)
-  const vkEngine = new FunnelEngine(store, vkTransport, { publicBaseUrl: config.publicBaseUrl })
+  const vkEngine = new FunnelEngine(store, vkTransport, { publicBaseUrl: config.publicBaseUrl, directPayments })
   const adapter = new VkUpdateAdapter(store, vkEngine, api, logger)
   return { api, engine: vkEngine, longPoll: new VkLongPollRunner(api, adapter, logger) }
 }

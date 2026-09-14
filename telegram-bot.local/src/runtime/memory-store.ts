@@ -316,12 +316,50 @@ export class MemoryRuntimeStore implements RuntimeStore {
     return found ? structuredClone(found) : null
   }
 
-  async markPaymentPaid(paymentId: string, _telegramChargeId: string, _providerChargeId?: string) {
+  async getPayment(paymentId: string) {
+    const found = this.payments.get(paymentId)
+    return found ? structuredClone(found) : null
+  }
+
+  async getPaymentByProviderId(provider: PaymentRecord['provider'], providerPaymentId: string) {
+    const found = [...this.payments.values()].find((payment) => payment.provider === provider && payment.providerPaymentId === providerPaymentId)
+    return found ? structuredClone(found) : null
+  }
+
+  async attachProviderPayment(paymentId: string, providerPaymentId: string, confirmationUrl: string, providerStatus: string) {
+    const payment = this.payments.get(paymentId)
+    if (!payment) throw new Error('PAYMENT_NOT_FOUND')
+    if (payment.providerPaymentId && payment.providerPaymentId !== providerPaymentId) throw new Error('PAYMENT_PROVIDER_ID_CONFLICT')
+    Object.assign(payment, { providerPaymentId, confirmationUrl, providerStatus })
+    return structuredClone(payment)
+  }
+
+  async updateProviderPaymentStatus(paymentId: string, providerStatus: string, failed = false) {
+    const payment = this.payments.get(paymentId)
+    if (!payment) throw new Error('PAYMENT_NOT_FOUND')
+    payment.providerStatus = providerStatus
+    if (failed && payment.status !== 'paid') payment.status = 'failed'
+    return structuredClone(payment)
+  }
+
+  async markPaymentPaid(paymentId: string, _telegramChargeId?: string, _providerChargeId?: string) {
     const payment = this.payments.get(paymentId)
     if (!payment) throw new Error('PAYMENT_NOT_FOUND')
     const firstSuccess = payment.status !== 'paid'
     payment.status = 'paid'
     return { payment: structuredClone(payment), firstSuccess }
+  }
+
+  async claimPaymentFulfillment(paymentId: string) {
+    const payment = this.payments.get(paymentId)
+    if (!payment || payment.status !== 'paid' || payment.fulfillmentStartedAt) return false
+    payment.fulfillmentStartedAt = new Date().toISOString()
+    return true
+  }
+
+  async completePaymentFulfillment(paymentId: string) {
+    const payment = this.payments.get(paymentId)
+    if (payment && !payment.fulfilledAt) payment.fulfilledAt = new Date().toISOString()
   }
 
   async recordPurchase(payment: PaymentRecord) {

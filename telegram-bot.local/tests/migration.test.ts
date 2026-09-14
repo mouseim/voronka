@@ -22,6 +22,7 @@ describe('PostgreSQL migration', () => {
         'sessions',
         'jobs',
         'payments',
+        'payment_integrations',
         'analytics_events',
         'admin_audit_log',
       ]))

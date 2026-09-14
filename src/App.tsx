@@ -103,7 +103,7 @@ export default function App() {
 }
 
 function WorkspaceRoute({ document, rawSection, onBack, onEdit, onAnalytics, onSection }: { document: FunnelDocument; rawSection: string; onBack: () => void; onEdit: () => void; onAnalytics: () => void; onSection: (section: WorkspaceSection) => void }) {
-  const allowed: WorkspaceSection[] = ['variables', 'tests', 'media', 'products', 'bot']
+  const allowed: WorkspaceSection[] = ['variables', 'tests', 'media', 'products', 'integrations', 'bot']
   const section = allowed.includes(rawSection as WorkspaceSection) ? rawSection as WorkspaceSection : 'variables'
   return <Workspace document={document} section={section} onSection={onSection} onBack={onBack} onEdit={onEdit} onAnalytics={onAnalytics} />
 }

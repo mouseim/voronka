@@ -193,6 +193,33 @@ TELEGRAM_PAYMENT_PROVIDER_TOKEN=секретный_provider_token
 публикация показывает расхождение. Реальная сумма счёта берётся из
 зафиксированной runtime-конфигурации версии.
 
+### Прямая ЮKassa для Telegram и VK
+
+Новый провайдер `yookassa_api` использует YooKassa Server API и redirect checkout,
+не Telegram Invoice. В редакторе откройте «Интеграции → ЮKassa», укажите URL
+runtime и `EDITOR_ADMIN_TOKEN`, затем сохраните `shopId` и секретный ключ.
+Секрет шифруется AES-256-GCM ключом `INTEGRATION_ENCRYPTION_KEY` и не входит в
+`.funnel`, localStorage или ответы API.
+
+```dotenv
+PUBLIC_BASE_URL=https://bot.example.com
+EDITOR_ADMIN_TOKEN=длинный_случайный_токен
+INTEGRATION_ENCRYPTION_KEY=base64_от_32_случайных_байт
+EDITOR_ORIGINS=https://editor.example.com,http://localhost:5173
+```
+
+В кабинете ЮKassa включите HTTP-уведомления для `payment.succeeded` и
+`payment.canceled` на `https://bot.example.com/webhooks/yookassa`. Runtime всегда
+повторно получает платёж из API и сверяет ID внутреннего платежа, сумму и валюту;
+доставка защищена отдельной атомарной отметкой. Дополнительно работают фоновая
+сверка каждые 45 секунд и кнопка «Проверить оплату».
+
+Редактор записывает в продукт только `paymentProvider: "yookassa_api"`; старые
+продукты без поля по-прежнему настраиваются командой `/product`. Чеки и данные
+покупателя в MVP не формируются: режим магазина и обязательность чеков нужно
+согласовать с настройками конкретного мерчанта, не добавляя фиктивный email,
+ставку НДС или предмет расчёта.
+
 ## 6. Админка
 
 `/admin` доступна только ID из `ADMIN_TELEGRAM_IDS`.
@@ -235,6 +262,9 @@ BOT_MODE=webhook
 PUBLIC_BASE_URL=https://bot.example.com
 TELEGRAM_WEBHOOK_SECRET=случайная_строка_минимум_16_символов
 TELEGRAM_PAYMENT_PROVIDER_TOKEN=
+EDITOR_ADMIN_TOKEN=длинный_случайный_токен
+INTEGRATION_ENCRYPTION_KEY=base64_от_32_случайных_байт
+EDITOR_ORIGINS=https://editor.example.com
 LOG_LEVEL=info
 PORT=8080
 HOST=0.0.0.0

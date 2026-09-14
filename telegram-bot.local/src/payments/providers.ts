@@ -38,7 +38,18 @@ const yookassa: PaymentProviderAdapter = {
   },
 }
 
-const adapters = { mock, telegram_stars: telegramStars, yookassa }
+const yookassaApi: PaymentProviderAdapter = {
+  name: 'yookassa_api',
+  settlesImmediately: false,
+  currency: (config) => config.currency,
+  providerToken: () => undefined,
+  assertAllowed(config) {
+    if (config.currency !== 'RUB') throw new Error('YOOKASSA_API_REQUIRES_RUB')
+    if (!Number.isInteger(config.amountMinor) || config.amountMinor <= 0) throw new Error('INVALID_PAYMENT_AMOUNT')
+  },
+}
+
+const adapters = { mock, telegram_stars: telegramStars, yookassa, yookassa_api: yookassaApi }
 
 export function paymentProviderFor(
   config: ProductRuntimeConfig,

@@ -38,6 +38,7 @@ import { applyQuietHours } from './quiet-hours'
 import { unsupportedReachableCapability } from './capabilities'
 import type { RuntimeStore } from './store'
 import { paymentProviderFor } from '../payments/providers'
+import type { DirectPaymentGateway } from '../payments/yookassa'
 
 interface EngineOptions {
   publicBaseUrl?: string | null
@@ -45,6 +46,7 @@ interface EngineOptions {
   now?: () => Date
   automaticTransitionLimit?: number
   recoveryDelayMs?: number
+  directPayments?: DirectPaymentGateway
 }
 
 export class FunnelEngine {
@@ -75,6 +77,7 @@ export class FunnelEngine {
     const { version, trackingId } = resolved
     const document = version.document
     const unsupported = unsupportedReachableCapability(document, this.transport.capabilities)
+      ?? await this.unsupportedPaymentForPlatform(version)
     if (unsupported) {
       await this.transport.sendText(user.externalUserId, `Эта воронка использует неподдерживаемую на ${this.transport.platform} возможность: ${unsupported}.`)
       throw new Error(`UNSUPPORTED_PLATFORM_CAPABILITY:${this.transport.platform}:${unsupported}`)
@@ -129,6 +132,37 @@ export class FunnelEngine {
       if (trackingId) await this.event(session, 'source_attributed', { trackingCode }, `source:${trackingId}`)
     }
     await this.run(user, session)
+  }
+
+  private async unsupportedPaymentForPlatform(version: FunnelVersionRecord) {
+    if (this.transport.platform !== 'vk') return null
+    const document = version.document
+    const reachable = new Set<string>()
+    const pending = [document.funnel.startNodeId]
+    while (pending.length) {
+      const nodeId = pending.pop()!
+      if (reachable.has(nodeId)) continue
+      reachable.add(nodeId)
+      document.edges.filter((edge) => edge.source === nodeId).forEach((edge) => pending.push(edge.target))
+    }
+    for (const node of document.nodes.filter((item) => reachable.has(item.id))) {
+      const productIds: string[] = []
+      if (node.type === 'product') {
+        const productId = (node.data as ProductBlockData).productId
+        if (productId) productIds.push(productId)
+      }
+      if (node.type === 'message') productIds.push(...(node.data as MessageData).buttons.filter((button) => button.action === 'product').map((button) => button.productId ?? ''))
+      if (node.type === 'test') {
+        const test = document.tests.find((item) => item.id === String((node.data as { testId?: string }).testId ?? ''))
+        productIds.push(...(test?.results.flatMap((result) => result.buttons).filter((button) => button.action === 'product').map((button) => button.productId ?? '') ?? []))
+        productIds.push(...(test?.combinedResults.flatMap((result) => result.buttons).filter((button) => button.action === 'product').map((button) => button.productId ?? '') ?? []))
+      }
+      for (const productId of productIds.filter(Boolean)) {
+        const config = await this.store.getProductConfig(version.id, productId)
+        if (!config || !['mock', 'yookassa_api'].includes(config.provider)) return `payments:${node.id}`
+      }
+    }
+    return null
   }
 
   async stop(profile: PlatformProfile): Promise<void> {
@@ -293,6 +327,24 @@ export class FunnelEngine {
       await this.finishPayment(user, payment, `mock_${action.paymentId}`)
       return true
     }
+    if (action.type === 'check_payment') {
+      const payment = await this.store.getPayment(action.paymentId)
+      if (!payment || payment.userId !== user.id || payment.provider !== 'yookassa_api') return false
+      let current: PaymentRecord
+      try {
+        current = await this.syncDirectPayment(payment)
+      } catch {
+        await this.sendPaymentButtons(user, payment, 'ЮKassa временно не ответила. Платёж не потерян — попробуйте проверить ещё раз.')
+        return true
+      }
+      if (current.status === 'paid') return true
+      if (current.status === 'failed') {
+        await this.transport.sendText(user.externalUserId, 'Платёж отменён. Можно открыть предложение и попробовать снова.')
+        return true
+      }
+      await this.sendPaymentButtons(user, current, 'Платёж пока не подтверждён. Если вы уже оплатили, подождите немного и проверьте ещё раз.')
+      return true
+    }
     return false
   }
 
@@ -368,6 +420,14 @@ export class FunnelEngine {
   }
 
   async handleJob(job: DurableJob): Promise<void> {
+    if (job.type === 'payment_reconcile') {
+      const payment = await this.store.getPayment(String(job.payload.paymentId ?? ''))
+      if (!payment || payment.status === 'paid' || payment.status === 'failed') return
+      const current = await this.syncDirectPayment(payment)
+      const attempt = Number(job.payload.attempt ?? 1)
+      if (current.status === 'pending' && attempt < 40) await this.schedulePaymentReconciliation(current, attempt + 1)
+      return
+    }
     const sessionId = String(job.payload.sessionId ?? '')
     let session = await this.store.getSession(sessionId)
     if (!session || !['active', 'waiting'].includes(session.status)) return
@@ -912,6 +972,10 @@ export class FunnelEngine {
       await this.transport.sendText(user.externalUserId, text)
       return
     }
+    if (user.platform === 'vk' && !['mock', 'yookassa_api'].includes(config.provider)) {
+      await this.transport.sendText(user.externalUserId, 'Этот способ оплаты доступен только в Telegram. Для VK выберите прямую оплату ЮKassa.')
+      return
+    }
     const alreadyPurchased = await this.store.hasPurchase(user.id, version.id, productId)
     if (alreadyPurchased && config.repeatPolicy !== 'repurchase') {
       if (config.repeatPolicy === 'redeliver') {
@@ -945,6 +1009,29 @@ export class FunnelEngine {
       await this.finishPayment(user, payment, `mock_${payment.id}`)
       return
     }
+    if (config.provider === 'yookassa_api') {
+      if (!this.options.directPayments || !this.options.publicBaseUrl) {
+        await this.transport.sendText(user.externalUserId, 'Прямая оплата ЮKassa ещё не подключена администратором.')
+        return
+      }
+      try {
+        const checkout = await this.options.directPayments.createCheckout(
+          payment,
+          product.description || product.name,
+          `${this.options.publicBaseUrl}/payments/return`,
+        )
+        await this.sendPaymentButtons(user, checkout, 'Перейдите в ЮKassa для оплаты. После возврата подтверждение придёт автоматически.')
+        await this.schedulePaymentReconciliation(checkout, 1)
+      } catch (error) {
+        await this.event(session, 'payment_failed', { paymentId: payment.id, reason: error instanceof Error ? error.message : 'checkout_error' }, `payment_checkout_failed:${payment.id}`)
+        await this.transport.sendText(user.externalUserId, 'Не удалось создать платёж. Попробуйте ещё раз позже.')
+        return
+      }
+      session.state.awaiting = 'payment'
+      session.status = 'waiting'
+      await this.save(session)
+      return
+    }
     await this.transport.sendInvoice(user.externalUserId, {
       title: product.name.slice(0, 32),
       description: product.description.slice(0, 255) || product.name,
@@ -959,21 +1046,20 @@ export class FunnelEngine {
     await this.save(session)
   }
 
-  private async finishPayment(user: RuntimeUser, payment: PaymentRecord, telegramChargeId: string, providerChargeId?: string) {
+  private async finishPayment(user: RuntimeUser, payment: PaymentRecord, telegramChargeId?: string, providerChargeId?: string) {
     const paid = await this.store.markPaymentPaid(payment.id, telegramChargeId, providerChargeId)
+    if (!await this.store.claimPaymentFulfillment(payment.id)) return
     const version = await this.requireVersion(payment.versionId)
     const session = await this.store.getSession(payment.sessionId)
     if (!session) return
     const config = await this.store.getProductConfig(version.id, payment.productId)
     if (!config) return
     const purchase = await this.store.recordPurchase(paid.payment)
-    if (paid.firstSuccess) {
-      await this.sendText(user.externalUserId, this.render(version.document, session, config.afterPurchaseText || version.document.products.find((item) => item.id === payment.productId)?.afterPurchaseText || 'Спасибо за покупку!'))
-      await this.event(session, 'payment_succeeded', { paymentId: payment.id, productId: payment.productId, amountMinor: payment.amountMinor, currency: payment.currency }, `payment_success:${payment.id}`)
-    }
+    await this.sendText(user.externalUserId, this.render(version.document, session, config.afterPurchaseText || version.document.products.find((item) => item.id === payment.productId)?.afterPurchaseText || 'Спасибо за покупку!'))
+    await this.event(session, 'payment_succeeded', { paymentId: payment.id, productId: payment.productId, amountMinor: payment.amountMinor, currency: payment.currency }, `payment_success:${payment.id}`)
     if (purchase.created || config.repeatPolicy !== 'repurchase') {
       await this.deliverConfiguredAssets(user, session, version, config, purchase.purchaseId, true)
-    } else if (paid.firstSuccess) {
+    } else {
       await this.deliverConfiguredAssets(user, session, version, config, null, false)
     }
     const node = session.currentNodeId ? version.document.nodes.find((item) => item.id === session.currentNodeId) : undefined
@@ -981,6 +1067,45 @@ export class FunnelEngine {
       const advanced = await this.advanceAndSave(session, version.document, node.id, 'paid')
       await this.run(user, advanced)
     }
+    await this.store.completePaymentFulfillment(payment.id)
+  }
+
+  async handleDirectPayment(paymentId: string) {
+    const payment = await this.store.getPayment(paymentId)
+    if (!payment || payment.provider !== 'yookassa_api') return false
+    const user = await this.store.getUser(payment.userId)
+    if (!user || user.platform !== this.transport.platform) return false
+    const current = await this.syncDirectPayment(payment)
+    return current.status === 'paid'
+  }
+
+  private async syncDirectPayment(payment: PaymentRecord) {
+    if (!this.options.directPayments) throw new Error('YOOKASSA_API_NOT_CONFIGURED')
+    const current = await this.options.directPayments.sync(payment)
+    if (current.status === 'paid') {
+      const user = await this.store.getUser(current.userId)
+      if (user && user.platform === this.transport.platform) await this.finishPayment(user, current, undefined, current.providerPaymentId)
+    }
+    return current
+  }
+
+  private async sendPaymentButtons(user: RuntimeUser, payment: PaymentRecord, text: string) {
+    if (!payment.confirmationUrl) throw new Error('YOOKASSA_CONFIRMATION_URL_MISSING')
+    const check = await this.store.createCallback(user.id, payment.sessionId, { type: 'check_payment', paymentId: payment.id }, 86_400)
+    await this.transport.sendText(user.externalUserId, text, [
+      [{ text: 'Оплатить', url: payment.confirmationUrl }],
+      [{ text: 'Проверить оплату', callbackToken: check }],
+    ])
+  }
+
+  private async schedulePaymentReconciliation(payment: PaymentRecord, attempt: number) {
+    await this.store.scheduleJob({
+      uniqueKey: `payment-reconcile:${payment.id}:${attempt}`,
+      type: 'payment_reconcile',
+      payload: { paymentId: payment.id, sessionId: payment.sessionId, attempt },
+      dueAt: new Date(this.now().getTime() + 45_000).toISOString(),
+      maxAttempts: 8,
+    })
   }
 
   private async deliverConfiguredAssets(user: RuntimeUser, session: RuntimeSession, version: FunnelVersionRecord, config: ProductRuntimeConfig, purchaseId: string | null, enforceOnce: boolean) {

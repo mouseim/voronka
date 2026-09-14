@@ -17,7 +17,7 @@ export type TimerUnit = 'minutes' | 'hours' | 'days'
 export type MediaType = 'image' | 'video' | 'audio' | 'voice' | 'video_note' | 'document' | 'animation'
 export type QuestionType = 'single' | 'multiple' | 'scale' | 'number' | 'text'
 export type IssueSeverity = 'error' | 'warning' | 'advice'
-export type WorkspaceSection = 'variables' | 'tests' | 'media' | 'products' | 'bot'
+export type WorkspaceSection = 'variables' | 'tests' | 'media' | 'products' | 'integrations' | 'bot'
 export type VariableType = 'text' | 'number' | 'boolean'
 export type VariableValue = string | number | boolean
 export type VariableOperationKind = 'set' | 'add' | 'subtract' | 'toggle' | 'reset'
@@ -260,6 +260,7 @@ export interface Product {
   active: boolean
   assetId?: string
   afterPurchaseText: string
+  paymentProvider?: 'yookassa_api'
 }
 
 export interface FunnelVariable {

@@ -9,6 +9,7 @@ import {
   Check,
   ChevronRight,
   Copy,
+  CreditCard,
   FileImage,
   GitBranch,
   Link2,
@@ -40,6 +41,7 @@ import type {
   WorkspaceSection,
 } from '../model/types'
 import { useEditorStore } from '../store/editor'
+import { checkYooKassa, getYooKassaStatus, integrationConnection, saveYooKassa, setIntegrationConnection, type YooKassaIntegrationStatus } from '../services/integrations'
 
 export type { WorkspaceSection } from '../model/types'
 
@@ -57,6 +59,7 @@ const navigation: Array<{ id: WorkspaceSection; label: string; icon: typeof Beak
   { id: 'tests', label: 'Тесты', icon: Beaker },
   { id: 'media', label: 'Медиа', icon: FileImage },
   { id: 'products', label: 'Продукты', icon: Package },
+  { id: 'integrations', label: 'Интеграции', icon: CreditCard },
   { id: 'bot', label: 'Бот', icon: Bot },
 ]
 
@@ -77,6 +80,7 @@ export function Workspace({ document, section, onSection, onBack, onEdit, onAnal
         {section === 'tests' && <TestsSection document={document} />}
         {section === 'media' && <MediaSection document={document} />}
         {section === 'products' && <ProductsSection document={document} />}
+        {section === 'integrations' && <IntegrationsSection />}
         {section === 'bot' && <BotSection document={document} />}
       </main>
     </div>
@@ -355,7 +359,29 @@ function ProductsSection({ document }: { document: FunnelDocument }) {
     const product: Product = { id: newId('product'), key: `product_${crypto.randomUUID().slice(0, 8)}`, name: 'Новый продукт', description: '', price: 0, active: true, afterPurchaseText: 'Спасибо за покупку!' }
     updateDocument((draft) => { draft.products.push(product) }); setSelectedId(product.id)
   }
-  return <><PageHeading eyebrow="Предложения" title="Продукты" text="Цена и содержание предложения. Реальная оплата пока только моделируется в предпросмотре." action={<button className="button primary" onClick={add}><Plus size={16} /> Добавить продукт</button>} /><div className="catalog-layout"><aside className="catalog-list">{document.products.map((product) => <button className={selectedId === product.id ? 'active' : ''} key={product.id} onClick={() => setSelectedId(product.id)}><span className="catalog-icon"><Package size={16} /></span><span><strong>{product.name}</strong><small>{money(product.price)} · {product.active ? 'Активен' : 'Выключен'}</small></span><ChevronRight size={14} /></button>)}</aside><section className="entity-editor">{selected ? <><Field label="Название"><input value={selected.name} onChange={(event) => patch({ name: event.target.value })} /></Field><Field label="Описание"><textarea rows={5} value={selected.description} onChange={(event) => patch({ description: event.target.value })} /></Field><div className="form-grid"><Field label="Цена, ₽"><input type="number" min="0" value={selected.price} onChange={(event) => patch({ price: Math.max(0, Number(event.target.value)) })} /></Field><Toggle checked={selected.active} onChange={(active) => patch({ active })} label="Продукт активен" /><Field label="Материал после оплаты"><select value={selected.assetId ?? ''} onChange={(event) => patch({ assetId: event.target.value || undefined })}><option value="">Без материала</option>{document.assets.map((asset) => <option value={asset.id} key={asset.id}>{asset.name}</option>)}</select></Field></div><Field label="Текст после покупки"><textarea rows={4} value={selected.afterPurchaseText} onChange={(event) => patch({ afterPurchaseText: event.target.value })} /></Field><div className="friendly-note">Продукт предлагается в {productUsageCount(document, selected.id)} местах воронки.</div><button className="button danger-outline" disabled={productUsageCount(document, selected.id) > 0} onClick={() => { if (!confirm(`Удалить продукт «${selected.name}»?`)) return; updateDocument((draft) => { draft.products = draft.products.filter((product) => product.id !== selected.id) }); setSelectedId('') }}><Trash2 size={14} /> Удалить продукт</button></> : <Empty title="Продукт не выбран" text="Добавьте продукт или выберите его слева." />}</section></div></>
+  return <><PageHeading eyebrow="Предложения" title="Продукты" text="Цена, выдача и способ оплаты продукта." action={<button className="button primary" onClick={add}><Plus size={16} /> Добавить продукт</button>} /><div className="catalog-layout"><aside className="catalog-list">{document.products.map((product) => <button className={selectedId === product.id ? 'active' : ''} key={product.id} onClick={() => setSelectedId(product.id)}><span className="catalog-icon"><Package size={16} /></span><span><strong>{product.name}</strong><small>{money(product.price)} · {product.active ? 'Активен' : 'Выключен'}</small></span><ChevronRight size={14} /></button>)}</aside><section className="entity-editor">{selected ? <><Field label="Название"><input value={selected.name} onChange={(event) => patch({ name: event.target.value })} /></Field><Field label="Описание"><textarea rows={5} value={selected.description} onChange={(event) => patch({ description: event.target.value })} /></Field><div className="form-grid"><Field label="Цена, ₽"><input type="number" min="0" value={selected.price} onChange={(event) => patch({ price: Math.max(0, Number(event.target.value)) })} /></Field><Field label="Оплата"><select value={selected.paymentProvider ?? ''} onChange={(event) => patch({ paymentProvider: event.target.value ? 'yookassa_api' : undefined })}><option value="">Настроить после импорта</option><option value="yookassa_api">ЮKassa — Telegram + VK</option></select></Field><Toggle checked={selected.active} onChange={(active) => patch({ active })} label="Продукт активен" /><Field label="Материал после оплаты"><select value={selected.assetId ?? ''} onChange={(event) => patch({ assetId: event.target.value || undefined })}><option value="">Без материала</option>{document.assets.map((asset) => <option value={asset.id} key={asset.id}>{asset.name}</option>)}</select></Field></div>{selected.paymentProvider === 'yookassa_api' && <div className="friendly-note">Для публикации подключите ЮKassa в разделе «Интеграции». Секрет не сохраняется в файле воронки.</div>}<Field label="Текст после покупки"><textarea rows={4} value={selected.afterPurchaseText} onChange={(event) => patch({ afterPurchaseText: event.target.value })} /></Field><div className="friendly-note">Продукт предлагается в {productUsageCount(document, selected.id)} местах воронки.</div><button className="button danger-outline" disabled={productUsageCount(document, selected.id) > 0} onClick={() => { if (!confirm(`Удалить продукт «${selected.name}»?`)) return; updateDocument((draft) => { draft.products = draft.products.filter((product) => product.id !== selected.id) }); setSelectedId('') }}><Trash2 size={14} /> Удалить продукт</button></> : <Empty title="Продукт не выбран" text="Добавьте продукт или выберите его слева." />}</section></div></>
+}
+
+function IntegrationsSection() {
+  const initial = integrationConnection()
+  const [url, setUrl] = useState(initial.runtimeUrl)
+  const [token, setToken] = useState(initial.adminToken)
+  const [shopId, setShopId] = useState('')
+  const [secretKey, setSecretKey] = useState('')
+  const [status, setStatus] = useState<YooKassaIntegrationStatus | null>(null)
+  const [message, setMessage] = useState('')
+  const connect = async () => {
+    setIntegrationConnection({ runtimeUrl: url, adminToken: token })
+    try { setStatus(await getYooKassaStatus()); setMessage('Соединение установлено.') } catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка соединения.') }
+  }
+  const save = async () => {
+    setIntegrationConnection({ runtimeUrl: url, adminToken: token })
+    try { setStatus(await saveYooKassa({ shopId, secretKey })); setSecretKey(''); setMessage('Реквизиты зашифрованы и сохранены в runtime.') } catch (error) { setMessage(error instanceof Error ? error.message : 'Ошибка сохранения.') }
+  }
+  const check = async () => {
+    try { const result = await checkYooKassa(); if (result.status) setStatus(result.status); setMessage(result.ok ? 'ЮKassa приняла авторизацию.' : 'Проверка не пройдена.') } catch (error) { setMessage(error instanceof Error ? error.message : 'Проверка не пройдена.') }
+  }
+  return <><PageHeading eyebrow="Платежи" title="Интеграции" text="Подключение хранится в runtime, а не в файле воронки или браузерном хранилище." /><div className="settings-stack"><EditorGroup title="Доступ к runtime"><div className="form-grid"><Field label="Адрес runtime"><input type="url" value={url} placeholder="https://bot.example.ru" onChange={(event) => setUrl(event.target.value)} /></Field><Field label="Токен администратора"><input type="password" autoComplete="off" value={token} onChange={(event) => setToken(event.target.value)} /></Field></div><button className="button" onClick={() => void connect()}>Подключиться</button></EditorGroup><EditorGroup title="ЮKassa"><div className="form-grid"><Field label="shopId"><input value={shopId} autoComplete="off" onChange={(event) => setShopId(event.target.value)} placeholder={status?.shopIdMasked ?? ''} /></Field><Field label="Секретный ключ"><input type="password" autoComplete="new-password" value={secretKey} onChange={(event) => setSecretKey(event.target.value)} /></Field></div><div className="friendly-note">Статус: {status?.configured ? `подключено (${status.shopIdMasked})` : 'не подключено'}. Токен администратора и введённый секрет живут только в памяти этой вкладки.</div><div className="inline-actions"><button className="button primary" disabled={!shopId || !secretKey} onClick={() => void save()}>Сохранить</button><button className="button" disabled={!status?.configured} onClick={() => void check()}>Проверить подключение</button></div>{message && <div className="friendly-note">{message}</div>}</EditorGroup></div></>
 }
 
 function BotSection({ document }: { document: FunnelDocument }) {

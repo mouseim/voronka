@@ -49,7 +49,13 @@ export interface RuntimeStore {
   hasPurchase(userId: string, versionId: string, productId: string): Promise<boolean>
   createPayment(input: Omit<PaymentRecord, 'id' | 'status'>): Promise<PaymentRecord>
   getPaymentByPayload(payload: string): Promise<PaymentRecord | null>
-  markPaymentPaid(paymentId: string, telegramChargeId: string, providerChargeId?: string): Promise<{ payment: PaymentRecord; firstSuccess: boolean }>
+  getPayment(paymentId: string): Promise<PaymentRecord | null>
+  getPaymentByProviderId(provider: PaymentRecord['provider'], providerPaymentId: string): Promise<PaymentRecord | null>
+  attachProviderPayment(paymentId: string, providerPaymentId: string, confirmationUrl: string, providerStatus: string): Promise<PaymentRecord>
+  updateProviderPaymentStatus(paymentId: string, providerStatus: string, failed?: boolean): Promise<PaymentRecord>
+  markPaymentPaid(paymentId: string, telegramChargeId?: string, providerChargeId?: string): Promise<{ payment: PaymentRecord; firstSuccess: boolean }>
+  claimPaymentFulfillment(paymentId: string): Promise<boolean>
+  completePaymentFulfillment(paymentId: string): Promise<void>
   recordPurchase(payment: PaymentRecord): Promise<{ purchaseId: string; created: boolean }>
   isDelivered(purchaseId: string, assetId: string): Promise<boolean>
   markDelivered(purchaseId: string, assetId: string, deliveryKey: string): Promise<boolean>

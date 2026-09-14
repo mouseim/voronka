@@ -30,4 +30,10 @@ describe('изолированные payment provider adapters', () => {
     expect(() => paymentProviderFor(service)).toThrow('TELEGRAM_PAYMENT_PROVIDER_TOKEN_REQUIRED')
     expect(paymentProviderFor(service, 'token').providerToken('token')).toBe('token')
   })
+
+  it('прямая ЮKassa независима от Telegram provider token', () => {
+    const direct = { ...base, provider: 'yookassa_api' as const, currency: 'RUB' }
+    expect(paymentProviderFor(direct).name).toBe('yookassa_api')
+    expect(() => paymentProviderFor({ ...direct, currency: 'USD' })).toThrow('YOOKASSA_API_REQUIRES_RUB')
+  })
 })

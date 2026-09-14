@@ -1,7 +1,7 @@
 import type { FunnelDocument, MediaType, VariableValue } from '../core/shared'
 
 export type SessionStatus = 'active' | 'waiting' | 'completed' | 'abandoned' | 'stopped' | 'failed'
-export type PaymentProviderName = 'unconfigured' | 'mock' | 'telegram_stars' | 'yookassa'
+export type PaymentProviderName = 'unconfigured' | 'mock' | 'telegram_stars' | 'yookassa' | 'yookassa_api'
 export type ProductType = 'digital' | 'service' | 'physical' | 'other'
 
 export type Platform = 'telegram' | 'vk'
@@ -95,6 +95,7 @@ export type CallbackAction =
   | { type: 'product_buy'; nodeId: string; productId: string }
   | { type: 'product_skip'; nodeId: string }
   | { type: 'mock_payment'; paymentId: string }
+  | { type: 'check_payment'; paymentId: string }
   | { type: 'restart'; funnelId: string }
 
 export interface CallbackRecord {
@@ -171,6 +172,11 @@ export interface PaymentRecord {
   amountMinor: number
   currency: string
   status: 'created' | 'pending' | 'paid' | 'failed' | 'refunded'
+  providerPaymentId?: string
+  confirmationUrl?: string
+  providerStatus?: string
+  fulfillmentStartedAt?: string
+  fulfilledAt?: string
 }
 
 export interface AnalyticsEvent {
@@ -189,7 +195,7 @@ export interface AnalyticsEvent {
 export interface DurableJob {
   id: string
   uniqueKey: string
-  type: 'timer_continue' | 'reminder' | 'redirect_continue' | 'resume_session'
+  type: 'timer_continue' | 'reminder' | 'redirect_continue' | 'resume_session' | 'payment_reconcile'
   payload: Record<string, unknown>
   dueAt: string
   attempts: number
