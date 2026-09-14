@@ -51,7 +51,7 @@ createTelegramBot(
   bot,
   store,
   engine,
-  (targetBot) => new AdminController(targetBot, adminRepository, config, logger, vkMedia),
+  (targetBot) => new AdminController(targetBot, adminRepository, config, logger, vkMedia, vkRuntime?.api),
   logger,
 )
 const worker = createJobWorker(store, {
@@ -95,10 +95,18 @@ async function main() {
   await bot.api.setMyCommands([
     { command: 'start', description: 'Начать или продолжить прохождение' },
     { command: 'stop', description: 'Остановить сообщения и напоминания' },
-    { command: 'admin', description: 'Админка (только allowlist)' },
-    { command: 'whoami', description: 'Показать ваш Telegram ID' },
-    { command: 'chatid', description: 'Показать ID текущего чата' },
   ])
+  await Promise.all([...config.adminIds].map(async (adminId) => {
+    try {
+      await bot.api.setMyCommands([
+        { command: 'start', description: 'Начать или продолжить прохождение' },
+        { command: 'stop', description: 'Остановить сообщения и напоминания' },
+        { command: 'print', description: 'Рассылка TG/VK' },
+      ], { scope: { type: 'chat', chat_id: adminId } })
+    } catch (error) {
+      logger.warn({ err: error, adminId }, 'Не удалось установить Telegram command menu администратора')
+    }
+  }))
   if (config.botMode === 'webhook') {
     await bot.api.setWebhook(`${config.publicBaseUrl}/telegram/webhook`, {
       secret_token: config.webhookSecret!,

@@ -61,6 +61,25 @@ describe('editor runtime integration', () => {
     await expect(integrations.deleteServerFunnel('funnel/id')).resolves.toEqual({ deleted: true, replacementSourceId: null })
     expect(fetchMock).toHaveBeenCalledWith('https://runtime.example/admin/editor/funnels/funnel%2Fid', expect.objectContaining({ method: 'DELETE' }))
   })
+
+  it('загружает список опубликованных версий и выбранный live snapshot', async () => {
+    vi.stubGlobal('window', { localStorage: memoryStorage(), sessionStorage: memoryStorage() })
+    const fetchMock = vi.fn(async (url: string) => new Response(JSON.stringify(url.endsWith('/versions')
+      ? { versions: [{ version: 2, status: 'published', publishedAt: '2026-09-15T00:00:00.000Z', active: true }] }
+      : { document: { ...freshDemoFunnel(), funnel: { ...freshDemoFunnel().funnel, version: 2 } } }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const integrations = await import('./integrations')
+    integrations.setIntegrationConnection({ runtimeUrl: 'https://runtime.example', adminToken: 'private-admin-token' })
+
+    await expect(integrations.getServerFunnelVersions('funnel/id')).resolves.toEqual([expect.objectContaining({ version: 2, active: true })])
+    await expect(integrations.getServerFunnelVersion('funnel/id', 2)).resolves.toMatchObject({ funnel: { version: 2 } })
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      'https://runtime.example/admin/editor/funnels/funnel%2Fid/versions',
+      'https://runtime.example/admin/editor/funnels/funnel%2Fid/versions/2',
+    ])
+  })
 })
 
 function memoryStorage() {

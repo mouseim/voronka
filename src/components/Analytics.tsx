@@ -1,9 +1,10 @@
 import { ArrowLeft, BarChart3, CheckCircle2, Download, Edit3, Eye, FileText, Package, Search, TrendingDown, TrendingUp, Users } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { analyticsForNode, nodeTitle } from '../model/funnel'
 import type { FunnelDocument } from '../model/types'
 import { applicationsCsv, contactsCsv } from '../model/csv'
 import { downloadText } from '../services/files'
+import { getServerFunnelVersion, getServerFunnelVersions, integrationConnection, type ServerFunnelVersion } from '../services/integrations'
 import { nodeMeta } from './nodeMeta'
 
 type Tab = 'overview' | 'stages' | 'questions' | 'results' | 'sources' | 'products' | 'data'
@@ -19,7 +20,48 @@ const tabs: Array<{ id: Tab; label: string }> = [
 
 export function Analytics({ document, onBack, onEdit }: { document: FunnelDocument; onBack: () => void; onEdit: () => void }) {
   const [tab, setTab] = useState<Tab>('overview')
-  const analytics = document.analytics
+  const [viewDocument, setViewDocument] = useState(document)
+  const [versions, setVersions] = useState<ServerFunnelVersion[]>([])
+  const [selectedVersion, setSelectedVersion] = useState(document.funnel.version)
+  const [loadingVersion, setLoadingVersion] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    setViewDocument(document)
+    setVersions([])
+    setSelectedVersion(document.funnel.version)
+    const connection = integrationConnection()
+    if (!connection.runtimeUrl || !connection.adminToken) return () => { cancelled = true }
+    void getServerFunnelVersions(document.funnel.id).then(async (available) => {
+      if (cancelled || !available.length) return
+      const initial = available.some((item) => item.version === document.funnel.version)
+        ? document.funnel.version
+        : (available.find((item) => item.active)?.version ?? available[0]!.version)
+      const liveDocument = await getServerFunnelVersion(document.funnel.id, initial)
+      if (cancelled) return
+      setVersions(available)
+      setSelectedVersion(initial)
+      setViewDocument(liveDocument)
+    }).catch(() => {
+      if (!cancelled) {
+        setVersions([])
+        setViewDocument(document)
+      }
+    })
+    return () => { cancelled = true }
+  }, [document])
+  const selectVersion = async (version: number) => {
+    const previous = selectedVersion
+    setSelectedVersion(version)
+    setLoadingVersion(true)
+    try {
+      setViewDocument(await getServerFunnelVersion(document.funnel.id, version))
+    } catch {
+      setSelectedVersion(previous)
+    } finally {
+      setLoadingVersion(false)
+    }
+  }
+  const analytics = viewDocument.analytics
   const started = analytics.summary.started
   const completed = analytics.summary.completed
   const conversion = started ? completed / started * 100 : 0
@@ -27,17 +69,17 @@ export function Analytics({ document, onBack, onEdit }: { document: FunnelDocume
     <header className="analytics-header app-header"><button className="brand-button" onClick={onBack}><span className="brand-mark">В</span><span><strong>Воронка</strong><small>конструктор</small></span></button><div className="header-divider" /><div className="analytics-title"><span>Статистика</span><strong>{document.funnel.name}</strong></div><button className="button secondary" onClick={onEdit}><Edit3 size={16} /> Редактировать</button></header>
     <main className="analytics-content">
       <button className="back-link" onClick={onBack}><ArrowLeft size={16} /> К моим воронкам</button>
-      <div className="analytics-hero"><div><span className="eyebrow">Снимок из файла</span><h1>Как работает воронка</h1><p>Версия {analytics.funnelVersion} · {analytics.snapshotAt ? formatDate(analytics.snapshotAt) : 'данных ещё нет'}</p></div>{analytics.snapshotAt && <div className="snapshot-badge"><FileText size={16} /> Не обновляется автоматически</div>}</div>
+      <div className="analytics-hero"><div><span className="eyebrow">{versions.length ? 'Данные runtime' : 'Снимок из файла'}</span><h1>Как работает воронка</h1><p>Версия {analytics.funnelVersion} · {analytics.snapshotAt ? formatDate(analytics.snapshotAt) : 'данных ещё нет'}</p>{versions.length > 0 && <label>Версия <select value={selectedVersion} disabled={loadingVersion} onChange={(event) => void selectVersion(Number(event.target.value))}>{versions.map((item) => <option key={item.version} value={item.version}>v{item.version}{item.active ? ' · текущая' : ''}</option>)}</select></label>}</div>{analytics.snapshotAt && <div className="snapshot-badge"><FileText size={16} /> {versions.length ? 'Актуальные данные сервера' : 'Не обновляется автоматически'}</div>}</div>
       {!analytics.snapshotAt ? <div className="analytics-empty"><div><BarChart3 size={40} /></div><h2>В этом файле ещё нет статистики</h2><p>Она появится после запуска воронки в Telegram-боте и импорта обновлённого файла.</p><button className="button primary" onClick={onEdit}>Вернуться к схеме</button></div> : <>
         <section className="metric-grid"><Metric icon={Users} label="Пришли" value={analytics.summary.totalUsers} note={`${started} начали`} color="blue" /><Metric icon={Eye} label="Начали" value={started} note={`${Math.max(0, analytics.summary.totalUsers - started)} не начали`} color="violet" /><Metric icon={CheckCircle2} label="Завершили" value={completed} note={`${Math.max(0, started - completed)} не завершили`} color="green" /><Metric icon={TrendingUp} label="Конверсия" value={`${conversion.toFixed(1)}%`} note="от начала до завершения" color="orange" /></section>
         <nav className="analytics-tabs">{tabs.map((item) => <button key={item.id} className={tab === item.id ? 'active' : ''} onClick={() => setTab(item.id)}>{item.label}</button>)}</nav>
-        {tab === 'overview' && <Overview document={document} />}
-        {tab === 'stages' && <Stages document={document} />}
-        {tab === 'questions' && <SimpleMetrics title="Ответы на вопросы" values={document.analytics.questions} empty="В снимке пока нет данных по вопросам теста." />}
-        {tab === 'results' && <Results document={document} />}
-        {tab === 'sources' && <Sources document={document} />}
-        {tab === 'products' && <Products document={document} />}
-        {tab === 'data' && <DataTables document={document} />}
+        {tab === 'overview' && <Overview document={viewDocument} />}
+        {tab === 'stages' && <Stages document={viewDocument} />}
+        {tab === 'questions' && <SimpleMetrics title="Ответы на вопросы" values={viewDocument.analytics.questions} empty="В снимке пока нет данных по вопросам теста." />}
+        {tab === 'results' && <Results document={viewDocument} />}
+        {tab === 'sources' && <Sources document={viewDocument} />}
+        {tab === 'products' && <Products document={viewDocument} />}
+        {tab === 'data' && <DataTables document={viewDocument} />}
       </>}
     </main>
   </div>

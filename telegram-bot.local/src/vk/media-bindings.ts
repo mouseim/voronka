@@ -37,6 +37,11 @@ export class VkMediaBindingService {
     return attachment
   }
 
+  async uploadForBroadcast(peerId: string, mediaType: 'image' | 'document', file: VkMediaFile) {
+    if (mediaType === 'image') return this.uploadPhoto(peerId, file)
+    return this.uploadDocument(peerId, file, 'doc')
+  }
+
   async bindExisting(versionId: string, assetId: string, value: string, adminTelegramId: string) {
     const attachment = parseVkAttachment(value)
     await this.repository.bindVkMedia(versionId, assetId, attachment, adminTelegramId)

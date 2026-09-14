@@ -24,6 +24,13 @@ export interface ServerFunnelSummary {
   nodeCount: number
 }
 
+export interface ServerFunnelVersion {
+  version: number
+  status: string
+  publishedAt: string
+  active: boolean
+}
+
 export class RuntimeRequestError extends Error {
   constructor(message: string, readonly issues: import('../model/types').ValidationIssue[] = []) {
     super(message)
@@ -60,6 +67,14 @@ export async function getServerFunnels() {
 
 export async function getServerFunnel(id: string) {
   return (await request<{ document: import('../model/types').FunnelDocument }>(`/admin/editor/funnels/${encodeURIComponent(id)}`)).document
+}
+
+export async function getServerFunnelVersions(id: string) {
+  return (await request<{ versions: ServerFunnelVersion[] }>(`/admin/editor/funnels/${encodeURIComponent(id)}/versions`)).versions
+}
+
+export async function getServerFunnelVersion(id: string, version: number) {
+  return (await request<{ document: import('../model/types').FunnelDocument }>(`/admin/editor/funnels/${encodeURIComponent(id)}/versions/${version}`)).document
 }
 
 export async function deleteServerFunnel(id: string) {

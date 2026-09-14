@@ -171,7 +171,7 @@ function MediaFields({ document, data, patch }: { document: FunnelDocument; data
 
 function TimerFields({ data, patch }: { data: TimerData; patch: Patch }) {
   return <>
-    <div className="field-pair"><Field label="Через сколько"><input type="number" min="1" value={data.duration} onChange={(event) => patch({ duration: Math.max(1, Number(event.target.value)) })} /></Field><Field label="Единица"><select value={data.unit} onChange={(event) => patch({ unit: event.target.value })}><option value="minutes">Минуты</option><option value="hours">Часы</option><option value="days">Дни</option></select></Field></div>
+    <div className="field-pair"><Field label="Через сколько"><input type="number" min="1" value={data.duration} onChange={(event) => patch({ duration: Math.max(1, Number(event.target.value)) })} /></Field><Field label="Единица"><select value={data.unit} onChange={(event) => patch({ unit: event.target.value })}><option value="seconds">Секунды</option><option value="minutes">Минуты</option><option value="hours">Часы</option><option value="days">Дни</option></select></Field></div>
     <Toggle checked={data.respectQuietHours} onChange={(respectQuietHours) => patch({ respectQuietHours })} label="Учитывать тихие часы" />
   </>
 }

@@ -157,6 +157,32 @@ export function createHttpServer(
     return { funnels: await paymentDependencies.adminRepository.listEditorFunnels() }
   })
 
+  app.get<{ Params: { id: string } }>('/admin/editor/funnels/:id/versions', async (request, reply) => {
+    if (!paymentDependencies?.adminRepository) return reply.code(503).send({
+      error: 'sync_unavailable', message: 'Загрузка версий воронки сейчас недоступна.',
+    })
+    const versions = await paymentDependencies.adminRepository.listEditorFunnelVersions(request.params.id)
+    if (!versions) return reply.code(404).send({
+      error: 'funnel_not_found', message: 'Опубликованная воронка не найдена.',
+    })
+    return { versions }
+  })
+
+  app.get<{ Params: { id: string; version: string } }>('/admin/editor/funnels/:id/versions/:version', async (request, reply) => {
+    if (!paymentDependencies?.adminRepository) return reply.code(503).send({
+      error: 'sync_unavailable', message: 'Загрузка статистики версии сейчас недоступна.',
+    })
+    const version = Number(request.params.version)
+    if (!Number.isSafeInteger(version) || version < 1) return reply.code(400).send({
+      error: 'invalid_version', message: 'Номер версии должен быть положительным целым числом.',
+    })
+    const document = await paymentDependencies.adminRepository.getEditorFunnelVersionAnalytics(request.params.id, version)
+    if (!document) return reply.code(404).send({
+      error: 'version_not_found', message: 'Опубликованная версия этой воронки не найдена.',
+    })
+    return { document }
+  })
+
   app.get<{ Params: { id: string } }>('/admin/editor/funnels/:id', async (request, reply) => {
     if (!paymentDependencies?.adminRepository) return reply.code(503).send({
       error: 'sync_unavailable', message: 'Загрузка опубликованной воронки сейчас недоступна.',

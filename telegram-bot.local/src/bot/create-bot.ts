@@ -34,6 +34,8 @@ export function createTelegramBot(
   bot.command('rollback', (ctx) => adminController.handleCommand(ctx, 'rollback', String(ctx.match ?? '')))
   bot.command('csv', (ctx) => adminController.handleCommand(ctx, 'csv', String(ctx.match ?? '')))
   bot.command('vkmedia', (ctx) => adminController.handleCommand(ctx, 'vkmedia', String(ctx.match ?? '')))
+  bot.command('print', (ctx) => adminController.handleCommand(ctx, 'print', String(ctx.match ?? '')))
+  bot.command('cancel', (ctx) => adminController.handleCommand(ctx, 'cancel', ''))
 
   bot.callbackQuery(/^adm_(.+)$/, async (ctx) => {
     await ctx.answerCallbackQuery().catch(() => undefined)

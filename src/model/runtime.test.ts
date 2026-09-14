@@ -49,6 +49,18 @@ describe('подробный scoring', () => {
 })
 
 describe('цикл файла', () => {
+  it('принимает таймеры в секундах без смены версии схемы', () => {
+    const source = freshDemoFunnel()
+    const timer = source.nodes.find((node) => node.type === 'timer')
+    if (!timer) throw new Error('Timer fixture missing')
+    const timerData = timer.data as { unit: 'seconds' | 'minutes' | 'hours' | 'days'; duration: number }
+    timerData.unit = 'seconds'
+    timerData.duration = 2
+    const result = parseAndMigrateFunnelDocument(JSON.parse(JSON.stringify(source)))
+    expect(result.success).toBe(true)
+    if (result.success) expect(result.document.nodes.find((node) => node.id === timer.id)?.data).toMatchObject({ unit: 'seconds', duration: 2 })
+  })
+
   it('экспорт и повторный импорт не теряют ветки, scoring и статистику', () => {
     const source = freshDemoFunnel()
     const serialized = JSON.parse(JSON.stringify(source))

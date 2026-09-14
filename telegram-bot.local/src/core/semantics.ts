@@ -23,7 +23,7 @@ export function messageTransitionMode(node: FunnelNode) {
 }
 
 export function timerDelayMs(data: TimerData): number {
-  const multiplier = data.unit === 'minutes' ? 60_000 : data.unit === 'hours' ? 3_600_000 : 86_400_000
+  const multiplier = data.unit === 'seconds' ? 1_000 : data.unit === 'minutes' ? 60_000 : data.unit === 'hours' ? 3_600_000 : 86_400_000
   return Math.max(1, data.duration) * multiplier
 }
 

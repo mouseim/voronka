@@ -36,7 +36,7 @@ const nodeSchema = z.discriminatedUnion('type', [
   node('start', base),
   node('message', base.extend({ text: z.string(), buttons: z.array(messageButton) })),
   node('media', base.extend({ assetId: z.string().optional(), caption: z.string(), required: z.boolean() })),
-  node('timer', base.extend({ duration: z.number().finite().positive(), unit: z.enum(['minutes', 'hours', 'days']), respectQuietHours: z.boolean() })),
+  node('timer', base.extend({ duration: z.number().finite().positive(), unit: z.enum(['seconds', 'minutes', 'hours', 'days']), respectQuietHours: z.boolean() })),
   node('variable', base.extend({ operations: z.array(variableOperation) })),
   node('condition', base.extend({
     variableId: z.string().optional(),

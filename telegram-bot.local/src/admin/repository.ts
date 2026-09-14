@@ -401,6 +401,46 @@ export class AdminRepository {
     return document
   }
 
+  async listEditorFunnelVersions(sourceFunnelId: string) {
+    const funnel = await this.pool.query<{ id: string }>(`
+      SELECT id FROM funnels WHERE source_funnel_id = $1 AND archived_at IS NULL
+    `, [sourceFunnelId])
+    if (!funnel.rows[0]) return null
+    const result = await this.pool.query<{
+      version: number
+      status: string
+      published_at: Date | string
+      active: boolean
+    }>(`
+      SELECT fv.version, fv.status, fv.published_at, f.active_version_id = fv.id AS active
+      FROM funnel_versions fv
+      JOIN funnels f ON f.id = fv.funnel_id
+      WHERE fv.funnel_id = $1
+        AND fv.published_at IS NOT NULL
+      ORDER BY fv.version DESC
+    `, [funnel.rows[0].id])
+    return result.rows.map((row) => ({
+      version: row.version,
+      status: row.status,
+      publishedAt: new Date(row.published_at).toISOString(),
+      active: row.active,
+    }))
+  }
+
+  async getEditorFunnelVersionAnalytics(sourceFunnelId: string, version: number) {
+    const result = await this.pool.query<{ id: string }>(`
+      SELECT fv.id
+      FROM funnels f
+      JOIN funnel_versions fv ON fv.funnel_id = f.id
+      WHERE f.source_funnel_id = $1
+        AND f.archived_at IS NULL
+        AND fv.version = $2
+        AND fv.published_at IS NOT NULL
+    `, [sourceFunnelId, version])
+    const row = result.rows[0]
+    return row ? buildAnalyticsSnapshot(this.pool, row.id) : null
+  }
+
   async deleteEditorFunnel(sourceFunnelId: string, _adminTelegramId: string) {
     return this.runtimeStore.transaction(async (client) => {
       const result = await client.query<{ id: string; default_for_bot: boolean }>(`
@@ -565,6 +605,19 @@ export class AdminRepository {
       ORDER BY last_seen_at DESC
       LIMIT $1
     `, [Math.min(20, Math.max(1, limit))])
+    return result.rows
+  }
+
+  async listBroadcastRecipients(target: 'tg' | 'vk' | 'all') {
+    const platforms = target === 'all' ? ['telegram', 'vk'] : [target === 'tg' ? 'telegram' : 'vk']
+    const result = await this.pool.query<{ platform: 'telegram' | 'vk'; external_user_id: string }>(`
+      SELECT platform, external_user_id
+      FROM telegram_users
+      WHERE platform = ANY($1::text[])
+        AND opted_out_at IS NULL
+        AND background_blocked = false
+      ORDER BY platform, last_seen_at, external_user_id
+    `, [platforms])
     return result.rows
   }
 

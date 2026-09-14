@@ -249,6 +249,29 @@ describe('PostgreSQL import/publish/version integration', () => {
       expect(downloaded?.analytics.applications).toEqual([])
       expect(await admin.getEditorFunnel('missing')).toBeNull()
 
+      const draftOnly = structuredClone(second.document)
+      draftOnly.funnel.version = 3
+      draftOnly.funnel.status = 'draft'
+      await database.query(`
+        INSERT INTO funnel_versions(funnel_id, version, schema_version, status, content_hash, raw_document)
+        VALUES ($1, 3, '3.0.0', 'draft', 'draft-only-hash', $2::jsonb)
+      `, [first.funnelId, JSON.stringify(draftOnly)])
+      expect(await admin.listEditorFunnelVersions(document.funnel.id)).toEqual([
+        expect.objectContaining({ version: 2, active: true }),
+        expect.objectContaining({ version: 1, active: false }),
+      ])
+      const versionOne = await admin.getEditorFunnelVersionAnalytics(document.funnel.id, 1)
+      expect(versionOne).toMatchObject({ funnel: { id: document.funnel.id, version: 1 }, analytics: { funnelVersion: 1 } })
+      expect(await admin.getEditorFunnelVersionAnalytics(document.funnel.id, 3)).toBeNull()
+      const other = await database.query<{ id: string }>("INSERT INTO funnels(funnel_key, source_funnel_id, name) VALUES ('other-version-key', 'other-version-source', 'Other') RETURNING id")
+      await database.query(`
+        INSERT INTO funnel_versions(funnel_id, version, schema_version, status, content_hash, raw_document, published_at)
+        VALUES ($1, 99, '3.0.0', 'published', 'other-version-hash', $2::jsonb, now())
+      `, [other.rows[0]!.id, JSON.stringify(draftOnly)])
+      expect(await admin.getEditorFunnelVersionAnalytics(document.funnel.id, 99)).toBeNull()
+      await database.query('DELETE FROM funnel_versions WHERE funnel_id = $1', [other.rows[0]!.id])
+      await database.query('DELETE FROM funnels WHERE id = $1', [other.rows[0]!.id])
+
       expect(await admin.deleteEditorFunnel(document.funnel.id, '1')).toEqual({ deleted: true, replacementSourceId: null })
       expect(await admin.listEditorFunnels()).toEqual([])
       expect(await admin.getEditorFunnel(document.funnel.id)).toBeNull()
@@ -302,6 +325,29 @@ describe('PostgreSQL import/publish/version integration', () => {
       await expect(admin.deleteEditorFunnel('target-source', '1')).resolves.toEqual({ deleted: true, replacementSourceId: 'replacement-source' })
       expect((await database.query<{ source_funnel_id: string }>('SELECT source_funnel_id FROM funnels WHERE default_for_bot = true')).rows).toEqual([{ source_funnel_id: 'replacement-source' }])
       expect((await admin.listFunnels()).map((row) => row.funnel_key)).toEqual(['replacement'])
+    } finally {
+      await database.close()
+    }
+  })
+
+  it('исключает opted-out и background-blocked пользователей из рассылки', async () => {
+    const database = await PGlite.create({ extensions: { pgcrypto } })
+    const pool = pglitePool(database)
+    try {
+      await applyMigrations(database)
+      const store = new PostgresRuntimeStore(pool)
+      await store.upsertUser({ platform: 'telegram', externalUserId: '101' })
+      await store.upsertUser({ platform: 'telegram', externalUserId: '102' })
+      await store.upsertUser({ platform: 'vk', externalUserId: '201' })
+      await store.upsertUser({ platform: 'vk', externalUserId: '202' })
+      await database.query("UPDATE telegram_users SET opted_out_at = now() WHERE external_user_id = '102'")
+      await database.query("UPDATE telegram_users SET background_blocked = true WHERE external_user_id = '202'")
+
+      const admin = new AdminRepository(pool, store)
+      expect(await admin.listBroadcastRecipients('all')).toEqual([
+        { platform: 'telegram', external_user_id: '101' },
+        { platform: 'vk', external_user_id: '201' },
+      ])
     } finally {
       await database.close()
     }

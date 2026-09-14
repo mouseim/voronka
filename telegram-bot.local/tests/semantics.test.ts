@@ -14,6 +14,7 @@ describe('runtime utilities', () => {
 
   it('детерминированно перемешивает и переводит таймеры в миллисекунды', () => {
     expect(stableShuffle([1, 2, 3, 4, 5], 'same')).toEqual(stableShuffle([1, 2, 3, 4, 5], 'same'))
+    expect(timerDelayMs({ title: '', duration: 2, unit: 'seconds', respectQuietHours: true })).toBe(2_000)
     expect(timerDelayMs({ title: '', duration: 2, unit: 'hours', respectQuietHours: true })).toBe(7_200_000)
   })
 

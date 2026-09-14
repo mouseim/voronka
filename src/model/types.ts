@@ -13,7 +13,7 @@ export type NodeType =
   | 'end'
 
 export type FunnelStatus = 'draft' | 'published' | 'archived'
-export type TimerUnit = 'minutes' | 'hours' | 'days'
+export type TimerUnit = 'seconds' | 'minutes' | 'hours' | 'days'
 export type MediaType = 'image' | 'video' | 'audio' | 'voice' | 'video_note' | 'document' | 'animation'
 export type QuestionType = 'single' | 'multiple' | 'scale' | 'number' | 'text'
 export type IssueSeverity = 'error' | 'warning' | 'advice'

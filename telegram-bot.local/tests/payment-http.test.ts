@@ -94,6 +94,13 @@ describe('payment HTTP boundary', () => {
       adminRepository: {
         listEditorFunnels: async () => [{ id: document.funnel.id, name: document.funnel.name, activeVersion: 3, updatedAt: '2026-09-14T00:00:00.000Z', publishedAt: '2026-09-14T00:00:00.000Z', isDefault: true, nodeCount: document.nodes.length }],
         getEditorFunnel: async (id: string) => id === document.funnel.id ? { ...document, analytics: { ...document.analytics, contacts: [], applications: [] } } : null,
+        listEditorFunnelVersions: async (id: string) => id === document.funnel.id ? [
+          { version: 3, status: 'published', publishedAt: '2026-09-14T00:00:00.000Z', active: true },
+          { version: 1, status: 'archived', publishedAt: '2026-09-12T00:00:00.000Z', active: false },
+        ] : null,
+        getEditorFunnelVersionAnalytics: async (id: string, version: number) => id === document.funnel.id && version === 1
+          ? { ...document, funnel: { ...document.funnel, version: 1 } }
+          : null,
         deleteEditorFunnel,
       },
     })
@@ -115,8 +122,31 @@ describe('payment HTTP boundary', () => {
       expect(active.json()).toMatchObject({ document: { documentType: 'funnel', funnel: { id: document.funnel.id } } })
       expect(active.body).not.toContain('hidden@example.test')
       expect(active.body).not.toMatch(/secretKey|EDITOR_ADMIN_TOKEN|TELEGRAM_BOT_TOKEN|VK_GROUP_TOKEN/)
+      const versions = await app.inject({
+        method: 'GET', url: `/admin/editor/funnels/${document.funnel.id}/versions`,
+        headers: { authorization: 'Bearer admin-token-long' },
+      })
+      expect(versions.statusCode).toBe(200)
+      expect(versions.json()).toMatchObject({ versions: [{ version: 3, active: true }, { version: 1, active: false }] })
+      const oldVersion = await app.inject({
+        method: 'GET', url: `/admin/editor/funnels/${document.funnel.id}/versions/1`,
+        headers: { authorization: 'Bearer admin-token-long' },
+      })
+      expect(oldVersion.statusCode).toBe(200)
+      expect(oldVersion.json()).toMatchObject({ document: { funnel: { id: document.funnel.id, version: 1 } } })
+      expect((await app.inject({
+        method: 'GET', url: `/admin/editor/funnels/${document.funnel.id}/versions/not-a-number`,
+        headers: { authorization: 'Bearer admin-token-long' },
+      })).statusCode).toBe(400)
+      expect((await app.inject({
+        method: 'GET', url: `/admin/editor/funnels/${document.funnel.id}/versions/2`,
+        headers: { authorization: 'Bearer admin-token-long' },
+      })).statusCode).toBe(404)
       expect((await app.inject({
         method: 'GET', url: '/admin/editor/funnels/missing', headers: { authorization: 'Bearer admin-token-long' },
+      })).statusCode).toBe(404)
+      expect((await app.inject({
+        method: 'GET', url: '/admin/editor/funnels/missing/versions', headers: { authorization: 'Bearer admin-token-long' },
       })).statusCode).toBe(404)
       expect((await app.inject({ method: 'DELETE', url: `/admin/editor/funnels/${document.funnel.id}` })).statusCode).toBe(401)
       const deleted = await app.inject({

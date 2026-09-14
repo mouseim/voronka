@@ -4,7 +4,12 @@ import type { Logger } from 'pino'
 import { parseAndMigrateFunnelDocument, type MediaType } from '../core/shared'
 import type { AppConfig } from '../config'
 import type { AdminRepository } from './repository'
-import type { VkMediaBindingService } from '../vk/media-bindings'
+import { formatVkAttachment, type VkMediaBindingService } from '../vk/media-bindings'
+import type { VkApi } from '../vk/api'
+import { toVkKeyboard } from '../vk/transport'
+
+type PrintTarget = 'tg' | 'vk' | 'all'
+type PrintButton = { text: string; url: string }
 
 type AdminAction =
   | { type: 'main' }
@@ -36,6 +41,7 @@ type AdminInputState =
   | { type: 'media'; versionId: string; assetId: string; expectedType: MediaType }
   | { type: 'vk_media'; versionId: string; assetId: string; expectedType: MediaType; peerId: string }
   | { type: 'vk_video'; versionId: string; assetId: string }
+  | { type: 'print'; target: PrintTarget; button?: PrintButton; createdAt: number; expiresAt: number }
 
 interface ActionRecord {
   adminId: string
@@ -54,6 +60,7 @@ export class AdminController {
     private readonly config: AppConfig,
     private readonly logger: Logger,
     private readonly vkMedia?: VkMediaBindingService,
+    private readonly vkApi?: VkApi,
   ) {}
 
   isAdministrator(ctx: Context) {
@@ -85,6 +92,27 @@ export class AdminController {
     if (!await this.guard(ctx)) return
     const adminId = String(ctx.from!.id)
     try {
+      if (command === 'print') {
+        const parsed = parsePrintCommand(args)
+        if (!parsed || ((parsed.target === 'vk' || parsed.target === 'all') && (!this.vkMedia || !this.vkApi))) {
+          await ctx.reply(!parsed ? printUsage() : 'VK runtime не настроен. Рассылка не запущена.')
+          return
+        }
+        const now = Date.now()
+        this.input.set(adminId, { type: 'print', ...parsed, createdAt: now, expiresAt: now + 10 * 60_000 })
+        await ctx.reply('Ожидаю сообщение для рассылки: текст, фото с подписью или документ с подписью.\n\nДля отмены отправьте /cancel.')
+        return
+      }
+      if (command === 'cancel') {
+        const state = this.input.get(adminId)
+        if (state?.type === 'print') {
+          this.input.delete(adminId)
+          await ctx.reply('Рассылка отменена.')
+        } else {
+          await ctx.reply('Нет ожидающей рассылки.')
+        }
+        return
+      }
       if (command === 'product') {
         const [versionId, productId, productType, provider, currency, amountRaw, assetsRaw] = args.trim().split(/\s+/)
         const amountMinor = Number(amountRaw)
@@ -151,6 +179,7 @@ export class AdminController {
     if (!this.isAdministrator(ctx) || !ctx.from || !ctx.message?.document) return false
     const adminId = String(ctx.from.id)
     const state = this.input.get(adminId)
+    if (state?.type === 'print') return this.handlePrintMessage(ctx, adminId, state)
     if (!state) return false
     if (state.type === 'media' || state.type === 'vk_media') return this.handleMedia(ctx)
     this.input.delete(adminId)
@@ -194,6 +223,7 @@ export class AdminController {
     if (!this.isAdministrator(ctx) || !ctx.from || !ctx.message?.text) return false
     const adminId = String(ctx.from.id)
     const state = this.input.get(adminId)
+    if (state?.type === 'print') return this.handlePrintMessage(ctx, adminId, state)
     if (state?.type !== 'vk_video') return false
     try {
       if (!this.vkMedia) throw new Error('VK_RUNTIME_DISABLED')
@@ -212,6 +242,7 @@ export class AdminController {
     if (!this.isAdministrator(ctx) || !ctx.from || !ctx.message) return false
     const adminId = String(ctx.from.id)
     const state = this.input.get(adminId)
+    if (state?.type === 'print') return this.handlePrintMessage(ctx, adminId, state)
     if (!state || (state.type !== 'media' && state.type !== 'vk_media')) return false
     const media = extractMedia(ctx)
     if (!media) {
@@ -501,6 +532,96 @@ export class AdminController {
     await ctx.reply(`Отправьте одним сообщением файл типа ${action.expectedType}. Он будет загружен в VK и привязан к выбранному asset.`)
   }
 
+  private async handlePrintMessage(
+    ctx: Context,
+    adminId: string,
+    state: Extract<AdminInputState, { type: 'print' }>,
+  ) {
+    if (state.expiresAt <= Date.now()) {
+      this.input.delete(adminId)
+      await ctx.reply('Ожидание рассылки истекло. Запустите /print снова.')
+      return true
+    }
+    const message = ctx.message
+    const media = extractMedia(ctx)
+    const supported = Boolean(message?.text || ((media?.type === 'image' || media?.type === 'document') && message?.caption))
+    if (!message || !supported) {
+      await ctx.reply('Поддерживаются только текст, фото с подписью или документ с подписью. Для отмены отправьте /cancel.')
+      return true
+    }
+
+    this.input.delete(adminId)
+    try {
+      const result = await this.sendPrint(ctx, state)
+      const lines = ['Рассылка завершена.', '']
+      if (state.target === 'tg' || state.target === 'all') lines.push(`TG: ${result.tgSuccess}/${result.tgTotal}`)
+      if (state.target === 'vk' || state.target === 'all') lines.push(`VK: ${result.vkSuccess}/${result.vkTotal}`)
+      lines.push(`Ошибок: ${result.failed}`)
+      await ctx.reply(lines.join('\n'))
+    } catch (error) {
+      this.logger.error({ err: error, adminId }, 'Не удалось выполнить рассылку')
+      await ctx.reply(`Рассылка не выполнена: ${humanError(error)}`)
+    }
+    return true
+  }
+
+  private async sendPrint(ctx: Context, state: Extract<AdminInputState, { type: 'print' }>) {
+    const message = ctx.message!
+    const recipients = await this.repository.listBroadcastRecipients(state.target)
+    const telegram = recipients.filter((recipient) => recipient.platform === 'telegram')
+    const vk = recipients.filter((recipient) => recipient.platform === 'vk')
+    let tgSuccess = 0
+    let vkSuccess = 0
+    let failed = 0
+    const replyMarkup = state.button ? new InlineKeyboard().url(state.button.text, state.button.url) : undefined
+
+    for (const recipient of telegram) {
+      try {
+        await this.bot.api.copyMessage(recipient.external_user_id, ctx.chat!.id, message.message_id, replyMarkup ? { reply_markup: replyMarkup } : {})
+        tgSuccess++
+      } catch (error) {
+        failed++
+        this.logger.warn({ err: error, platform: 'telegram' }, 'Не удалось доставить сообщение рассылки')
+      }
+    }
+
+    if (vk.length) {
+      if (!this.vkApi || !this.vkMedia) throw new Error('VK_RUNTIME_DISABLED')
+      const media = extractMedia(ctx)
+      let attachment: string | undefined
+      if (media?.type === 'image' || media?.type === 'document') {
+        try {
+          const content = await this.downloadTelegramFile(media.fileId, this.config.maxMediaBytes)
+          const uploaded = await this.vkMedia.uploadForBroadcast(vk[0]!.external_user_id, media.type, {
+            content,
+            filename: media.filename,
+            mimeType: media.mimeType,
+          })
+          attachment = formatVkAttachment(uploaded)
+        } catch (error) {
+          failed += vk.length
+          this.logger.warn({ err: error, platform: 'vk' }, 'Не удалось загрузить файл рассылки в VK')
+          return { tgSuccess, tgTotal: telegram.length, vkSuccess, vkTotal: vk.length, failed }
+        }
+      }
+      const exactText = message.text ?? message.caption ?? ''
+      const keyboard = state.button
+        ? JSON.stringify(toVkKeyboard([[{ text: state.button.text, url: state.button.url }]]))
+        : undefined
+      for (const recipient of vk) {
+        try {
+          await this.vkApi.sendMessage(recipient.external_user_id, exactText, keyboard, attachment)
+          vkSuccess++
+        } catch (error) {
+          failed++
+          this.logger.warn({ err: error, platform: 'vk' }, 'Не удалось доставить сообщение рассылки')
+        }
+      }
+    }
+
+    return { tgSuccess, tgTotal: telegram.length, vkSuccess, vkTotal: vk.length, failed }
+  }
+
   private versionKeyboard(adminId: string, versionId: string, funnelId: string, active: boolean, isDefault: boolean) {
     const rows: Array<Array<{ text: string; action: AdminAction }>> = [
       [{ text: 'Проверить', action: { type: 'validate', versionId } }, { text: 'Файлы', action: { type: 'media', versionId } }],
@@ -568,6 +689,28 @@ export class AdminController {
     if (content.length > maxBytes) throw new Error(`Файл превышает допустимые ${maxBytes} байт.`)
     return content
   }
+}
+
+export function parsePrintCommand(args: string): { target: PrintTarget; button?: PrintButton } | null {
+  const match = /^\s*(tg|vk|all)(?:\s+\[([^|\]\r\n]+)\|([^\]\r\n]+)\])?\s*$/.exec(args)
+  if (!match) return null
+  const target = match[1] as PrintTarget
+  if (!match[2] || !match[3]) return { target }
+  const text = match[2].trim()
+  const rawUrl = match[3].trim()
+  if (!text || !rawUrl) return null
+  const normalizedUrl = /^[a-z][a-z\d+.-]*:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`
+  try {
+    const url = new URL(normalizedUrl)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    return { target, button: { text, url: url.toString() } }
+  } catch {
+    return null
+  }
+}
+
+function printUsage() {
+  return 'Формат: /print tg|vk|all [Текст кнопки|https://example.com]'
 }
 
 function extractMedia(ctx: Context): {
