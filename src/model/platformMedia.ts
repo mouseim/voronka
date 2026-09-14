@@ -39,7 +39,7 @@ export function vkAttachmentTypeForMedia(type: MediaType): VkAttachmentType | nu
 }
 
 export function parseVkAttachment(value: string): VkAttachmentReference {
-  const match = value.trim().match(/(?:https?:\/\/(?:m\.)?vk\.com\/)?(photo|video|doc|audio_message)(-?\d+)_(\d+)(?:_([A-Za-z0-9_-]+))?$/)
+  const match = value.trim().match(/^(?:https?:\/\/(?:(?:m\.)?vk\.com|vkvideo\.ru)\/)?(photo|video|doc|audio_message)(-?\d+)_(\d+)(?:_([A-Za-z0-9_-]+))?$/)
   if (!match) throw new Error('VK_ATTACHMENT_INVALID')
   const ownerId = Number(match[2])
   const mediaId = Number(match[3])
@@ -65,7 +65,7 @@ export function mediaPlatformReadiness(asset: MediaAsset): { telegram: PlatformR
   if (!value) return {
     telegram,
     vk: capability.uploadSupported
-      ? { state: 'warning', label: 'нужна привязка через /vkmedia' }
+      ? { state: 'warning', label: 'нужна привязка через Telegram /admin' }
       : { state: 'warning', label: 'укажите готовый VK attachment' },
   }
   try {

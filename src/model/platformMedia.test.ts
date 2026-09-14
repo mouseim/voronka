@@ -24,7 +24,7 @@ describe('platform-specific media в .funnel 3.0', () => {
 
     expect(mediaPlatformReadiness(asset)).toEqual({
       telegram: { state: 'ready', label: 'используется общий источник' },
-      vk: { state: 'warning', label: 'нужна привязка через /vkmedia' },
+      vk: { state: 'warning', label: 'нужна привязка через Telegram /admin' },
     })
     expect(validateFunnel(freshDemoFunnel()).filter((issue) => issue.code.startsWith('vk_'))).toEqual([])
   })

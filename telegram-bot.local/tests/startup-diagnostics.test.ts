@@ -32,7 +32,7 @@ describe('startup diagnostics', () => {
     const logger = fakeLogger()
     const api = {
       async getLongPollSettings() {
-        return { enabled: true, events: { message_new: 1, message_event: 0 } }
+        return { is_enabled: true, events: { message_new: 1, message_event: 0 } }
       },
     } as Pick<VkApi, 'getLongPollSettings'> as VkApi
 
@@ -41,6 +41,18 @@ describe('startup diagnostics', () => {
       { enabled: true, messageNew: true, messageEvent: false },
       expect.stringContaining('message_event=1'),
     )
+  })
+
+  it('читает фактическое VK поле is_enabled без ложного warning', async () => {
+    const logger = fakeLogger()
+    const api = {
+      async getLongPollSettings() {
+        return { is_enabled: true, events: { message_new: 1, message_event: 1 } }
+      },
+    } as Pick<VkApi, 'getLongPollSettings'> as VkApi
+
+    await expect(diagnoseVkLongPollSettings(api, logger.value)).resolves.toEqual({ checked: true, ready: true })
+    expect(logger.warn).not.toHaveBeenCalled()
   })
 })
 

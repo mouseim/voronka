@@ -48,6 +48,19 @@ describe('editor runtime integration', () => {
       issues: [expect.objectContaining({ code: 'runtime_media_binding_missing' })],
     })
   })
+
+  it('вызывает hard-delete API и ожидает deleted response', async () => {
+    vi.stubGlobal('window', { localStorage: memoryStorage(), sessionStorage: memoryStorage() })
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ deleted: true, replacementSourceId: null }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const integrations = await import('./integrations')
+    integrations.setIntegrationConnection({ runtimeUrl: 'https://runtime.example', adminToken: 'private-admin-token' })
+
+    await expect(integrations.deleteServerFunnel('funnel/id')).resolves.toEqual({ deleted: true, replacementSourceId: null })
+    expect(fetchMock).toHaveBeenCalledWith('https://runtime.example/admin/editor/funnels/funnel%2Fid', expect.objectContaining({ method: 'DELETE' }))
+  })
 })
 
 function memoryStorage() {

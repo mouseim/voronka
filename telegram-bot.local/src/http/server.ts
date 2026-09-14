@@ -170,15 +170,15 @@ export function createHttpServer(
 
   app.delete<{ Params: { id: string } }>('/admin/editor/funnels/:id', async (request, reply) => {
     if (!paymentDependencies?.adminRepository) return reply.code(503).send({
-      error: 'sync_unavailable', message: 'Архивирование воронки сейчас недоступно.',
+      error: 'sync_unavailable', message: 'Удаление воронки сейчас недоступно.',
     })
     const adminId = config.adminIds.values().next().value
     if (!adminId) return reply.code(503).send({
       error: 'administrator_unavailable', message: 'На сервере не настроен администратор для журнала изменений.',
     })
-    const result = await paymentDependencies.adminRepository.archiveEditorFunnel(request.params.id, adminId)
+    const result = await paymentDependencies.adminRepository.deleteEditorFunnel(request.params.id, adminId)
     if (!result) return reply.code(404).send({
-      error: 'funnel_not_found', message: 'Воронка не найдена или уже находится в архиве.',
+      error: 'funnel_not_found', message: 'Воронка не найдена или уже удалена.',
     })
     return result
   })

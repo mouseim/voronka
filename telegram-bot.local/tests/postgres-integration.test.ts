@@ -169,7 +169,7 @@ describe('PostgreSQL import/publish/version integration', () => {
     }
   })
 
-  it('публикует из редактора с авто-версиями, готовыми платежами и закреплёнными сессиями', async () => {
+  it('публикует, физически удаляет target funnel и повторно освобождает её technical key', async () => {
     const database = await PGlite.create({ extensions: { pgcrypto } })
     const pool = pglitePool(database)
     try {
@@ -207,10 +207,20 @@ describe('PostgreSQL import/publish/version integration', () => {
         status: 'active', currentNodeId: document.funnel.startNodeId, state: {},
       })
       const oldPayment = await store.createPayment({
-        idempotencyKey: 'archive-keeps-payment', userId: user.id, sessionId: oldSession.id,
+        idempotencyKey: 'delete-removes-payment', userId: user.id, sessionId: oldSession.id,
         funnelId: first.funnelId, versionId: first.versionId, productId: document.products[0]!.id,
-        provider: 'yookassa_api', invoicePayload: 'archive-keeps-payment', amountMinor: 149000, currency: 'RUB',
+        provider: 'yookassa_api', invoicePayload: 'delete-removes-payment', amountMinor: 149000, currency: 'RUB',
       })
+      const paid = await store.markPaymentPaid(oldPayment.id, 'delete-charge')
+      const purchase = await store.recordPurchase(paid.payment)
+      await store.markDelivered(purchase.purchaseId, document.assets[0]!.id, 'delete-delivery')
+      await store.saveAnswer(oldSession.id, document.tests[0]!.id, document.tests[0]!.questions[0]!.id, 'answer')
+      await store.saveConsent(oldSession, 'consent-node', true, 'https://example.com/policy', 'Согласие')
+      await store.saveContactAndApplication(oldSession, { email: 'delete@example.test' })
+      await store.createCallback(user.id, oldSession.id, { type: 'advance', nodeId: document.funnel.startNodeId, handle: 'next' })
+      await store.createRedirect(user.id, oldSession.id, 'https://example.com', false)
+      await store.scheduleJob({ uniqueKey: 'delete-job', type: 'resume_session', payload: { sessionId: oldSession.id, nodeId: document.funnel.startNodeId }, dueAt: new Date().toISOString(), maxAttempts: 5 })
+      await store.appendEvent({ idempotencyKey: 'delete-event', type: 'test', userId: user.id, sessionId: oldSession.id, funnelId: first.funnelId, versionId: first.versionId })
       const changed = structuredClone(first.document)
       const message = changed.nodes.find((node) => node.type === 'message')!
       message.data.title = `${message.data.title} — обновлено`
@@ -239,19 +249,59 @@ describe('PostgreSQL import/publish/version integration', () => {
       expect(downloaded?.analytics.applications).toEqual([])
       expect(await admin.getEditorFunnel('missing')).toBeNull()
 
-      expect(await admin.archiveEditorFunnel(document.funnel.id, '1')).toEqual({ archived: true, replacementSourceId: null })
+      expect(await admin.deleteEditorFunnel(document.funnel.id, '1')).toEqual({ deleted: true, replacementSourceId: null })
       expect(await admin.listEditorFunnels()).toEqual([])
       expect(await admin.getEditorFunnel(document.funnel.id)).toBeNull()
       expect(await store.resolveVersion()).toBeNull()
       expect(await store.resolveVersion(document.bot.trackingLinks[0]?.code)).toBeNull()
-      expect((await store.getSession(oldSession.id))?.versionId).toBe(first.versionId)
-      expect(await store.getPayment(oldPayment.id)).toMatchObject({ id: oldPayment.id, status: 'pending' })
-      expect((await database.query('SELECT id FROM funnel_versions WHERE funnel_id = $1', [first.funnelId])).rows).toHaveLength(2)
-      expect(await admin.archiveEditorFunnel(document.funnel.id, '1')).toBeNull()
+      expect(await store.getSession(oldSession.id)).toBeNull()
+      expect(await store.getPayment(oldPayment.id)).toBeNull()
+      expect(await admin.deleteEditorFunnel(document.funnel.id, '1')).toBeNull()
+      for (const table of ['funnels', 'funnel_versions', 'version_media_bindings', 'runtime_product_configs', 'sessions', 'test_runs', 'answers', 'consents', 'contacts', 'applications', 'payments', 'purchases', 'content_deliveries', 'analytics_events', 'callback_tokens', 'redirect_tokens', 'jobs', 'admin_audit_log']) {
+        const count = await database.query<{ count: string }>(`SELECT count(*)::text AS count FROM ${table}`)
+        expect(Number(count.rows[0]!.count), table).toBe(0)
+      }
+      expect(Number((await database.query<{ count: string }>('SELECT count(*)::text AS count FROM telegram_users')).rows[0]!.count)).toBe(1)
+      expect(Number((await database.query<{ count: string }>('SELECT count(*)::text AS count FROM payment_integrations')).rows[0]!.count)).toBe(1)
+      expect(Number((await database.query<{ count: string }>('SELECT count(*)::text AS count FROM media_resources')).rows[0]!.count)).toBe(0)
 
-      const restored = await admin.publishFromEditor(second.document, '1')
-      expect(restored).toMatchObject({ published: true, created: false, versionId: second.versionId })
-      expect(await admin.listEditorFunnels()).toEqual([expect.objectContaining({ id: document.funnel.id, activeVersion: 2, isDefault: true })])
+      const replacement = structuredClone(second.document)
+      replacement.funnel.id = 'independent-replacement-funnel'
+      replacement.funnel.version = 1
+      replacement.funnel.parentVersion = undefined
+      replacement.funnel.status = 'draft'
+      const initialReplacement = await admin.publishFromEditor(replacement, '1')
+      for (const asset of replacement.assets) {
+        await admin.bindMedia(initialReplacement.versionId, asset.id, { type: asset.type, fileId: `replacement-${asset.id}` }, '1')
+      }
+      const recreated = await admin.publishFromEditor(replacement, '1')
+      expect(recreated).toMatchObject({ published: true, document: { funnel: { id: replacement.funnel.id, key: document.funnel.key } } })
+      expect(await admin.listEditorFunnels()).toEqual([expect.objectContaining({ id: replacement.funnel.id, activeVersion: 1, isDefault: true })])
+    } finally {
+      await database.close()
+    }
+  })
+
+  it('назначает replacement default и скрывает legacy archived funnels в Telegram admin', async () => {
+    const database = await PGlite.create({ extensions: { pgcrypto } })
+    const pool = pglitePool(database)
+    try {
+      await applyMigrations(database)
+      const target = await database.query<{ id: string }>("INSERT INTO funnels(funnel_key, source_funnel_id, name, default_for_bot) VALUES ('target', 'target-source', 'Target', true) RETURNING id")
+      const replacement = await database.query<{ id: string }>("INSERT INTO funnels(funnel_key, source_funnel_id, name) VALUES ('replacement', 'replacement-source', 'Replacement') RETURNING id")
+      await database.query("INSERT INTO funnels(funnel_key, source_funnel_id, name, archived_at) VALUES ('legacy', 'legacy-source', 'Legacy', now())")
+      for (const [funnelId, hash] of [[target.rows[0]!.id, 'target-hash'], [replacement.rows[0]!.id, 'replacement-hash']] as const) {
+        const version = await database.query<{ id: string }>(`
+          INSERT INTO funnel_versions(funnel_id, version, schema_version, status, content_hash, raw_document, published_at)
+          VALUES ($1, 1, '3.0.0', 'published', $2, '{}'::jsonb, now()) RETURNING id
+        `, [funnelId, hash])
+        await database.query('UPDATE funnels SET active_version_id = $2 WHERE id = $1', [funnelId, version.rows[0]!.id])
+      }
+      const admin = new AdminRepository(pool, new PostgresRuntimeStore(pool))
+
+      await expect(admin.deleteEditorFunnel('target-source', '1')).resolves.toEqual({ deleted: true, replacementSourceId: 'replacement-source' })
+      expect((await database.query<{ source_funnel_id: string }>('SELECT source_funnel_id FROM funnels WHERE default_for_bot = true')).rows).toEqual([{ source_funnel_id: 'replacement-source' }])
+      expect((await admin.listFunnels()).map((row) => row.funnel_key)).toEqual(['replacement'])
     } finally {
       await database.close()
     }

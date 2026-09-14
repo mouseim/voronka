@@ -4,8 +4,8 @@ import type { WorkspaceSection } from './components/Workspace'
 import { freshDemoFunnel } from './model/demo'
 import { createEmptyFunnel, duplicateFunnel } from './model/funnel'
 import type { DraftSummary, FunnelDocument } from './model/types'
-import { archiveFunnelDrafts, documentsMatchForSync, getDrafts, saveDraft, saveRevision } from './services/drafts'
-import { archiveServerFunnel, getServerFunnel, getServerFunnels, integrationConnection, setIntegrationConnection, type ServerFunnelSummary } from './services/integrations'
+import { deleteFunnelDrafts, documentsMatchForSync, getDrafts, saveDraft, saveRevision } from './services/drafts'
+import { deleteServerFunnel, getServerFunnel, getServerFunnels, integrationConnection, setIntegrationConnection, type ServerFunnelSummary } from './services/integrations'
 import { useEditorStore } from './store/editor'
 
 const Editor = lazy(() => import('./components/Editor').then((module) => ({ default: module.Editor })))
@@ -92,18 +92,18 @@ export default function App() {
   }
   const demo = () => open(freshDemoFunnel())
   const duplicate = async (source: FunnelDocument) => { const next = duplicateFunnel(source); await persist(next); open(next) }
-  const archive = async (target: { funnelId: string; name: string; onServer: boolean }) => {
+  const deleteFunnel = async (target: { funnelId: string; name: string; onServer: boolean }) => {
     const explanation = target.onServer
-      ? 'Она исчезнет из списка, но версии, статистика, платежи и активные прохождения сохранятся.'
-      : 'Она исчезнет из списка, но останется в локальном архиве этого браузера.'
-    if (!window.confirm(`Удалить воронку «${target.name}»?\n\n${explanation}`)) return
+      ? 'Это необратимо удалит её версии, статистику, прохождения, заявки, платежи и файлы, принадлежащие этой воронке, с сервера и этого устройства.'
+      : 'Это необратимо удалит все локальные версии и историю изменений этой воронки с этого устройства.'
+    if (!window.confirm(`Удалить воронку «${target.name}» без возможности восстановления?\n\n${explanation}`)) return
     try {
-      if (target.onServer) await archiveServerFunnel(target.funnelId)
-      await archiveFunnelDrafts(target.funnelId)
+      if (target.onServer) await deleteServerFunnel(target.funnelId)
+      await deleteFunnelDrafts(target.funnelId)
       await Promise.all([refresh(), refreshServer()])
     } catch (error) {
       setSyncState('error')
-      setSyncMessage(error instanceof Error ? error.message : 'Не удалось переместить воронку в архив.')
+      setSyncMessage(error instanceof Error ? error.message : 'Не удалось удалить воронку.')
     }
   }
   const importSave = async (source: FunnelDocument) => {
@@ -157,7 +157,7 @@ export default function App() {
     onRefreshServer: refreshServer,
     onImportSave: importSave,
     onDuplicate: duplicate,
-    onArchive: archive,
+    onDelete: deleteFunnel,
     onAnalytics: (next: FunnelDocument) => open(next, '/analytics'),
   }
 

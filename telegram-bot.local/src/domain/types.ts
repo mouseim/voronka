@@ -58,6 +58,7 @@ export interface TestResultDeliveryState {
   nodeId: string
   resultId: string
   textDelivered: boolean
+  actionsDelivered: boolean
   mediaState: 'not_needed' | 'pending' | 'delivered' | 'skipped_optional' | 'failed_required'
 }
 

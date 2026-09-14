@@ -91,15 +91,32 @@ export async function deleteDraft(id: string): Promise<void> {
   for (const revision of revisions) await requestFromStore(REVISIONS_STORE, 'readwrite', (store) => store.delete(revision.id))
 }
 
-export async function archiveFunnelDrafts(funnelId: string): Promise<void> {
-  const drafts = (await getDrafts()).filter((draft) => draft.document.funnel.id === funnelId && draft.status !== 'archived')
-  const archivedAt = new Date().toISOString()
-  for (const draft of drafts) {
-    const document = structuredClone(draft.document)
-    document.funnel.status = 'archived'
-    document.funnel.updatedAt = archivedAt
-    await saveDraft(document)
-  }
+export async function deleteFunnelDrafts(funnelId: string): Promise<void> {
+  const database = await openDatabase()
+  await new Promise<void>((resolve, reject) => {
+    const tx = database.transaction([DRAFTS_STORE, REVISIONS_STORE], 'readwrite')
+    const draftsStore = tx.objectStore(DRAFTS_STORE)
+    const revisionsStore = tx.objectStore(REVISIONS_STORE)
+    const draftsRequest = draftsStore.getAll()
+    const revisionsRequest = revisionsStore.getAll()
+    let drafts: unknown[] | null = null
+    let revisions: DraftRevision[] | null = null
+    const remove = () => {
+      if (!drafts || !revisions) return
+      for (const raw of drafts) {
+        const draft = raw as Partial<DraftSummary>
+        if (draft.document?.funnel.id === funnelId && draft.id) draftsStore.delete(draft.id)
+      }
+      for (const revision of revisions) {
+        if (revision.document?.funnel.id === funnelId || revision.draftId.startsWith(`${funnelId}::v`)) revisionsStore.delete(revision.id)
+      }
+    }
+    draftsRequest.onsuccess = () => { drafts = draftsRequest.result; remove() }
+    revisionsRequest.onsuccess = () => { revisions = revisionsRequest.result as DraftRevision[]; remove() }
+    tx.oncomplete = () => { database.close(); resolve() }
+    tx.onerror = () => { database.close(); reject(tx.error) }
+    tx.onabort = () => { database.close(); reject(tx.error) }
+  })
 }
 
 export async function saveRevision(document: FunnelDocument, reason: string): Promise<DraftRevision> {

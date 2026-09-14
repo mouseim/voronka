@@ -20,6 +20,9 @@ type AdminAction =
   | { type: 'media_upload'; versionId: string; assetId: string; expectedType: MediaType }
   | { type: 'media_unbind'; versionId: string; assetId: string }
   | { type: 'media_test'; versionId: string; assetId: string }
+  | { type: 'vk_media_upload'; versionId: string; assetId: string; expectedType: MediaType }
+  | { type: 'vk_media_peer'; versionId: string; assetId: string; expectedType: MediaType; peerId: string }
+  | { type: 'vk_media_unbind'; versionId: string; assetId: string }
   | { type: 'stats'; versionId?: string }
   | { type: 'recent'; kind: 'contacts' | 'applications' | 'payments' }
   | { type: 'csv'; kind: 'contacts' | 'applications' | 'payments'; versionId?: string }
@@ -32,6 +35,7 @@ type AdminInputState =
   | { type: 'import' }
   | { type: 'media'; versionId: string; assetId: string; expectedType: MediaType }
   | { type: 'vk_media'; versionId: string; assetId: string; expectedType: MediaType; peerId: string }
+  | { type: 'vk_video'; versionId: string; assetId: string }
 
 interface ActionRecord {
   adminId: string
@@ -186,6 +190,24 @@ export class AdminController {
     return true
   }
 
+  async handleText(ctx: Context) {
+    if (!this.isAdministrator(ctx) || !ctx.from || !ctx.message?.text) return false
+    const adminId = String(ctx.from.id)
+    const state = this.input.get(adminId)
+    if (state?.type !== 'vk_video') return false
+    try {
+      if (!this.vkMedia) throw new Error('VK_RUNTIME_DISABLED')
+      const saved = await this.vkMedia.bindExisting(state.versionId, state.assetId, ctx.message.text.trim(), adminId)
+      if (saved.type !== 'video') throw new Error('VK_VIDEO_ATTACHMENT_REQUIRED')
+      this.input.delete(adminId)
+      await ctx.reply(`VK-видео привязано: video${saved.ownerId}_${saved.mediaId}.`)
+      await this.showMediaInfo(ctx, adminId, state.versionId, state.assetId)
+    } catch (error) {
+      await ctx.reply(`Не удалось привязать VK-видео: ${humanError(error)} Отправьте attachment вида video-123_456_accessKey или ссылку на VK Video.`)
+    }
+    return true
+  }
+
   async handleMedia(ctx: Context) {
     if (!this.isAdministrator(ctx) || !ctx.from || !ctx.message) return false
     const adminId = String(ctx.from.id)
@@ -219,11 +241,8 @@ export class AdminController {
         confirmation = 'Telegram-файл привязан и проверен.'
       }
       this.input.delete(adminId)
-      await ctx.reply(confirmation, {
-        reply_markup: this.keyboard(adminId, [
-          [{ text: '← К файлам', action: { type: 'media', versionId: state.versionId } }],
-        ]),
-      })
+      await ctx.reply(confirmation)
+      await this.showMediaInfo(ctx, adminId, state.versionId, state.assetId)
     } catch (error) {
       await ctx.reply(`Не удалось привязать файл: ${humanError(error)}`)
     }
@@ -307,24 +326,7 @@ export class AdminController {
       return
     }
     if (action.type === 'media_info') {
-      const row = (await this.repository.listMedia(action.versionId)).find((item) => item.asset_id === action.assetId)
-      if (!row) throw new Error('ASSET_NOT_FOUND')
-      await ctx.reply([
-        `Telegram: ${row.telegram_bound ? '✅ привязан' : '❓ не загружен'}`,
-        `VK: ${row.vk_bound ? `✅ ${row.vk_attachment_type}${row.vk_owner_id}_${row.vk_media_id}` : '❓ не привязан'}`,
-        `Asset: ${row.asset_key}`,
-        `Ожидаемый тип: ${row.expected_type}`,
-        row.file_size ? `Размер: ${row.file_size} байт` : '',
-        row.mime_type ? `MIME: ${row.mime_type}` : '',
-      ].filter(Boolean).join('\n'), { reply_markup: this.keyboard(adminId, [
-        [{ text: row.bound ? 'Заменить' : 'Загрузить', action: { type: 'media_upload', versionId: action.versionId, assetId: action.assetId, expectedType: row.expected_type } }],
-        ...(row.bound ? [
-          [{ text: 'Тестовая отправка', action: { type: 'media_test' as const, versionId: action.versionId, assetId: action.assetId } }],
-          [{ text: 'Удалить привязку', action: { type: 'media_unbind' as const, versionId: action.versionId, assetId: action.assetId } }],
-        ] : []),
-        [{ text: '← К файлам', action: { type: 'media', versionId: action.versionId } }],
-      ]) })
-      return
+      return this.showMediaInfo(ctx, adminId, action.versionId, action.assetId)
     }
     if (action.type === 'media_upload') {
       this.input.set(adminId, {
@@ -349,6 +351,38 @@ export class AdminController {
       } catch {
         await ctx.reply('Telegram не принимает эту привязку для текущего бота. Нажмите «Заменить» и загрузите исходный файл заново; VK-привязка останется без изменений.')
       }
+      return
+    }
+    if (action.type === 'vk_media_upload') {
+      if (!this.vkMedia) throw new Error('VK_RUNTIME_DISABLED')
+      if (action.expectedType === 'video') {
+        this.input.set(adminId, { type: 'vk_video', versionId: action.versionId, assetId: action.assetId })
+        await ctx.reply('Отправьте attachment VK-видео вида video-123_456_accessKey или ссылку на VK Video. UUID и peer ID вводить не нужно.')
+        return
+      }
+      if (!['image', 'voice', 'document'].includes(action.expectedType)) throw new Error(`VK_MEDIA_UPLOAD_UNSUPPORTED:${action.expectedType}`)
+      const peers = await this.repository.recentVkPeers()
+      if (!peers.length) {
+        await ctx.reply('Сначала напишите VK-боту «Начать», затем вернитесь к этому файлу и повторите загрузку в VK.')
+        return
+      }
+      if (peers.length === 1) return this.prepareVkUpload(ctx, adminId, action, peers[0]!.peer_id)
+      await ctx.reply('Выберите недавнего пользователя VK, для диалога с которым загрузить файл:', {
+        reply_markup: this.keyboard(adminId, [
+          ...peers.map((peer) => [{
+            text: vkPeerLabel(peer),
+            action: { type: 'vk_media_peer' as const, versionId: action.versionId, assetId: action.assetId, expectedType: action.expectedType, peerId: peer.peer_id },
+          }]),
+          [{ text: '← К файлу', action: { type: 'media_info' as const, versionId: action.versionId, assetId: action.assetId } }],
+        ]),
+      })
+      return
+    }
+    if (action.type === 'vk_media_peer') return this.prepareVkUpload(ctx, adminId, action, action.peerId)
+    if (action.type === 'vk_media_unbind') {
+      await this.repository.unbindMedia(action.versionId, action.assetId, adminId, 'vk')
+      await ctx.reply('VK-привязка удалена. Telegram-файл не изменён.')
+      await this.showMediaInfo(ctx, adminId, action.versionId, action.assetId)
       return
     }
     if (action.type === 'stats') {
@@ -409,12 +443,8 @@ export class AdminController {
         'Пример mock:',
         '/product <version> <product> digital mock RUB 99000 <asset>',
         '',
-        'VK photo/voice/document upload:',
-        '/vkmedia VERSION_ID ASSET_ID VK_PEER_ID',
-        'Затем отправьте файл в этот чат.',
-        '',
-        'VK video binding:',
-        '/vkmedia VERSION_ID ASSET_ID VK_PEER_ID video-123_456_accessKey',
+        'Telegram и VK-файлы настраиваются через Воронки → версия → Файлы.',
+        'Команда /vkmedia сохранена только для диагностики и обратной совместимости.',
         '',
         'Stars: provider=telegram_stars, currency=XTR.',
         'ЮKassa: provider=yookassa и TELEGRAM_PAYMENT_PROVIDER_TOKEN; digital через ЮKassa запрещён.',
@@ -423,6 +453,52 @@ export class AdminController {
         'CSV: /csv contacts|applications|payments|sources|nodes|tests [VERSION_ID]',
       ].join('\n'))
     }
+  }
+
+  private async showMediaInfo(ctx: Context, adminId: string, versionId: string, assetId: string) {
+    const row = (await this.repository.listMedia(versionId)).find((item) => item.asset_id === assetId)
+    if (!row) throw new Error('ASSET_NOT_FOUND')
+    const rows: Array<Array<{ text: string; action: AdminAction }>> = [[{
+      text: row.telegram_bound ? 'Заменить TG' : 'Загрузить TG',
+      action: { type: 'media_upload', versionId, assetId, expectedType: row.expected_type },
+    }]]
+    if (row.telegram_bound) rows[0]!.push(
+      { text: 'Тест TG', action: { type: 'media_test', versionId, assetId } },
+      { text: 'Удалить TG', action: { type: 'media_unbind', versionId, assetId } },
+    )
+    if (['image', 'voice', 'document', 'video'].includes(row.expected_type)) {
+      rows.push([{
+        text: row.expected_type === 'video'
+          ? (row.vk_bound ? 'Заменить VK-видео' : 'Привязать VK-видео')
+          : (row.vk_bound ? 'Заменить в VK' : 'Загрузить в VK'),
+        action: { type: 'vk_media_upload', versionId, assetId, expectedType: row.expected_type },
+      }])
+      if (row.vk_bound) rows.at(-1)!.push({ text: 'Удалить VK', action: { type: 'vk_media_unbind', versionId, assetId } })
+    }
+    rows.push([{ text: '← К файлам', action: { type: 'media', versionId } }])
+    await ctx.reply([
+      `Asset: ${row.asset_key}`,
+      `Ожидаемый тип: ${row.expected_type}`,
+      '',
+      `Telegram: ${row.telegram_bound ? '✅ привязан' : '❓ не загружен'}`,
+      `VK: ${row.vk_bound ? `✅ ${row.vk_attachment_type}${row.vk_owner_id}_${row.vk_media_id}` : '❓ не привязан'}`,
+      !['image', 'voice', 'document', 'video'].includes(row.expected_type) ? 'Этот тип файла пока не поддерживается VK.' : '',
+      row.file_size ? `Размер TG: ${row.file_size} байт` : '',
+      row.mime_type ? `MIME TG: ${row.mime_type}` : '',
+    ].filter((line) => line !== '').join('\n'), { reply_markup: this.keyboard(adminId, rows) })
+  }
+
+  private async prepareVkUpload(
+    ctx: Context,
+    adminId: string,
+    action: Extract<AdminAction, { type: 'vk_media_upload' | 'vk_media_peer' }>,
+    peerId: string,
+  ) {
+    this.input.set(adminId, {
+      type: 'vk_media', versionId: action.versionId, assetId: action.assetId,
+      expectedType: action.expectedType, peerId,
+    })
+    await ctx.reply(`Отправьте одним сообщением файл типа ${action.expectedType}. Он будет загружен в VK и привязан к выбранному asset.`)
   }
 
   private versionKeyboard(adminId: string, versionId: string, funnelId: string, active: boolean, isDefault: boolean) {
@@ -550,7 +626,21 @@ function humanError(error: unknown) {
     MEDIA_NOT_BOUND: 'Файл ещё не привязан.',
     VK_RUNTIME_DISABLED: 'VK runtime не настроен: задайте VK_GROUP_ID и VK_GROUP_TOKEN.',
     VK_ATTACHMENT_INVALID: 'Некорректный VK attachment. Пример: video-123_456_accessKey.',
+    VK_VIDEO_ATTACHMENT_REQUIRED: 'Нужен attachment типа video.',
   }
   if (message.startsWith('MEDIA_TYPE_MISMATCH:')) return `Ожидается тип ${message.split(':')[1]}.`
+  if (message.startsWith('VK_MEDIA_UPLOAD_UNSUPPORTED:')) return `Этот тип (${message.split(':')[1]}) пока нельзя загрузить в VK.`
+  if (message.startsWith('VK_HTTP_ERROR:')) return 'VK временно не принял загрузку. Проверьте доступность VK и повторите попытку.'
+  if (message.startsWith('VK_API_ERROR:')) return 'VK отклонил файл или не разрешил загрузку в выбранный диалог. Проверьте файл и повторите попытку.'
+  if (message.startsWith('VK_UPLOAD_MISSING_FIELD:') || message === 'VK_PHOTO_SAVE_EMPTY' || message === 'VK_SAVED_ATTACHMENT_INVALID') {
+    return 'VK вернул неполные данные о загруженном файле. Повторите попытку.'
+  }
   return known[message] ?? message
+}
+
+function vkPeerLabel(peer: { peer_id: string; first_name: string | null; username: string | null }) {
+  const firstName = peer.first_name?.trim()
+  const username = peer.username ? `@${peer.username.replace(/^@/, '')}` : ''
+  const label = [firstName, username].filter(Boolean).join(' · ') || 'Пользователь VK'
+  return label.slice(0, 48)
 }

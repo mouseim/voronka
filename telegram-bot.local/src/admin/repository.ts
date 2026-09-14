@@ -357,6 +357,7 @@ export class AdminRepository {
       LEFT JOIN funnel_versions active ON active.id = f.active_version_id
       LEFT JOIN funnel_versions fv ON fv.funnel_id = f.id
       LEFT JOIN sessions s ON s.funnel_id = f.id
+      WHERE f.archived_at IS NULL
       GROUP BY f.id, active.version
       ORDER BY f.created_at
     `)
@@ -400,30 +401,34 @@ export class AdminRepository {
     return document
   }
 
-  async archiveEditorFunnel(sourceFunnelId: string, adminTelegramId: string) {
+  async deleteEditorFunnel(sourceFunnelId: string, _adminTelegramId: string) {
     return this.runtimeStore.transaction(async (client) => {
       const result = await client.query<{ id: string; default_for_bot: boolean }>(`
         SELECT id, default_for_bot
         FROM funnels
-        WHERE source_funnel_id = $1 AND archived_at IS NULL
+        WHERE source_funnel_id = $1
         FOR UPDATE
       `, [sourceFunnelId])
       const funnel = result.rows[0]
       if (!funnel) return null
 
-      await client.query(`
-        UPDATE funnels
-        SET archived_at = now(), default_for_bot = false, updated_at = now()
-        WHERE id = $1
+      const media = await client.query<{ resource_id: string }>(`
+        SELECT DISTINCT resource_id
+        FROM version_media_bindings
+        WHERE version_id IN (SELECT id FROM funnel_versions WHERE funnel_id = $1)
+          AND resource_id IS NOT NULL
       `, [funnel.id])
+
+      await client.query('UPDATE funnels SET default_for_bot = false, active_version_id = NULL WHERE id = $1', [funnel.id])
 
       let replacementSourceId: string | null = null
       if (funnel.default_for_bot) {
         const replacement = await client.query<{ id: string; source_funnel_id: string }>(`
-          SELECT id, source_funnel_id
-          FROM funnels
-          WHERE archived_at IS NULL AND active_version_id IS NOT NULL AND id <> $1
-          ORDER BY updated_at DESC
+          SELECT funnel.id, funnel.source_funnel_id
+          FROM funnels funnel
+          JOIN funnel_versions active ON active.id = funnel.active_version_id AND active.status = 'published'
+          WHERE funnel.archived_at IS NULL AND funnel.id <> $1
+          ORDER BY funnel.updated_at DESC
           LIMIT 1
           FOR UPDATE
         `, [funnel.id])
@@ -433,11 +438,54 @@ export class AdminRepository {
         }
       }
 
+      await client.query("DELETE FROM jobs WHERE payload->>'sessionId' IN (SELECT id::text FROM sessions WHERE funnel_id = $1)", [funnel.id])
       await client.query(`
-        INSERT INTO admin_audit_log(admin_telegram_id, action, funnel_id, details)
-        VALUES ($1, 'archive_funnel', $2, $3)
-      `, [adminTelegramId, funnel.id, JSON.stringify({ replacementSourceId })])
-      return { archived: true as const, replacementSourceId }
+        DELETE FROM content_deliveries
+        WHERE purchase_id IN (
+          SELECT purchase.id
+          FROM purchases purchase
+          JOIN payments payment ON payment.id = purchase.payment_id
+          WHERE payment.funnel_id = $1
+             OR payment.version_id IN (SELECT id FROM funnel_versions WHERE funnel_id = $1)
+             OR payment.session_id IN (SELECT id FROM sessions WHERE funnel_id = $1)
+             OR purchase.version_id IN (SELECT id FROM funnel_versions WHERE funnel_id = $1)
+        )
+      `, [funnel.id])
+      await client.query(`
+        DELETE FROM purchases
+        WHERE payment_id IN (
+          SELECT id FROM payments
+          WHERE funnel_id = $1
+             OR version_id IN (SELECT id FROM funnel_versions WHERE funnel_id = $1)
+             OR session_id IN (SELECT id FROM sessions WHERE funnel_id = $1)
+        )
+           OR version_id IN (SELECT id FROM funnel_versions WHERE funnel_id = $1)
+      `, [funnel.id])
+      await client.query('DELETE FROM payments WHERE funnel_id = $1 OR version_id IN (SELECT id FROM funnel_versions WHERE funnel_id = $1) OR session_id IN (SELECT id FROM sessions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM applications WHERE session_id IN (SELECT id FROM sessions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM contacts WHERE funnel_id = $1 OR version_id IN (SELECT id FROM funnel_versions WHERE funnel_id = $1) OR session_id IN (SELECT id FROM sessions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM consents WHERE session_id IN (SELECT id FROM sessions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM answers WHERE session_id IN (SELECT id FROM sessions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM test_runs WHERE session_id IN (SELECT id FROM sessions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM callback_tokens WHERE session_id IN (SELECT id FROM sessions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM redirect_tokens WHERE session_id IN (SELECT id FROM sessions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM analytics_events WHERE funnel_id = $1 OR version_id IN (SELECT id FROM funnel_versions WHERE funnel_id = $1) OR session_id IN (SELECT id FROM sessions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM sessions WHERE funnel_id = $1', [funnel.id])
+      await client.query('DELETE FROM admin_audit_log WHERE funnel_id = $1 OR version_id IN (SELECT id FROM funnel_versions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM runtime_product_configs WHERE version_id IN (SELECT id FROM funnel_versions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM version_media_bindings WHERE version_id IN (SELECT id FROM funnel_versions WHERE funnel_id = $1)', [funnel.id])
+      await client.query('DELETE FROM funnel_versions WHERE funnel_id = $1', [funnel.id])
+      await client.query('DELETE FROM funnels WHERE id = $1', [funnel.id])
+
+      const resourceIds = media.rows.map((row) => row.resource_id)
+      if (resourceIds.length) {
+        await client.query(`
+          DELETE FROM media_resources resource
+          WHERE resource.id = ANY($1::uuid[])
+            AND NOT EXISTS (SELECT 1 FROM version_media_bindings binding WHERE binding.resource_id = resource.id)
+        `, [resourceIds])
+      }
+      return { deleted: true as const, replacementSourceId }
     })
   }
 
@@ -501,6 +549,22 @@ export class AdminRepository {
       WHERE f.archived_at IS NULL AND fv.status = 'published'
       ORDER BY f.name, b.asset_key
     `)
+    return result.rows
+  }
+
+  async recentVkPeers(limit = 8) {
+    const result = await this.pool.query<{
+      peer_id: string
+      first_name: string | null
+      username: string | null
+      last_seen_at: Date | string
+    }>(`
+      SELECT external_user_id AS peer_id, first_name, username, last_seen_at
+      FROM telegram_users
+      WHERE platform = 'vk'
+      ORDER BY last_seen_at DESC
+      LIMIT $1
+    `, [Math.min(20, Math.max(1, limit))])
     return result.rows
   }
 

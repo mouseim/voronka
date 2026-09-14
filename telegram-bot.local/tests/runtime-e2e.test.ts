@@ -69,7 +69,8 @@ describe('E2E runtime с фальшивым Telegram transport', () => {
     for (let index = 0; index < document.tests[0]!.questions.length; index += 1) {
       await click(store, engine, { type: 'test_single' })
     }
-    await click(store, engine, { type: 'advance', handle: /^result_/ })
+    expect(transport.texts.some((message) => message.text === 'Что сделать дальше?')).toBe(false)
+    expect([...store.callbacks.values()].some((callback) => callback.action.type === 'advance' && /^result_/.test(callback.action.handle))).toBe(false)
     await click(store, engine, { type: 'advance', handle: 'button_form' })
 
     await engine.handleText(profile, 'Анна')
@@ -361,6 +362,30 @@ describe('E2E runtime с фальшивым Telegram transport', () => {
     expect(session.state.pendingTestResult).toBeUndefined()
     expect(transport.media).toContainEqual(expect.objectContaining({ fileId: 'new-bot-file-id' }))
     expect(transport.texts.filter((message) => message.text.includes(result.shortText))).toHaveLength(1)
+  })
+
+  it('сохраняет авторские result actions без служебного текста и искусственного продолжения', async () => {
+    const document = await loadDemo()
+    document.bot.quietHours.enabled = false
+    for (const result of document.tests[0]!.results) {
+      result.buttons = [{ id: `details-${result.id}`, text: 'Открыть рекомендации', action: 'url', url: 'https://example.com/recommendations' }]
+    }
+    const store = new MemoryRuntimeStore()
+    const version = store.install(document, { allowPlaceholders: false })
+    store.bindMedia(version.id, { assetId: 'asset_cover', assetKey: 'test_cover', expectedType: 'image', platform: 'telegram', telegramFileId: 'cover' })
+    store.bindMedia(version.id, { assetId: 'asset_guide', assetKey: 'personal_guide', expectedType: 'document', platform: 'telegram', telegramFileId: 'guide' })
+    const transport = new FakeTransport()
+    const engine = new FunnelEngine(store, transport)
+    await engine.start(profile)
+    await click(store, engine, { type: 'advance', handle: 'button_test' })
+    for (let index = 0; index < document.tests[0]!.questions.length; index += 1) await click(store, engine, { type: 'test_single' })
+
+    const session = [...store.sessions.values()][0]!
+    expect(session.currentNodeId).toBe(document.nodes.find((node) => node.type === 'test')!.id)
+    expect(session.state.pendingTestResult).toBeUndefined()
+    expect(transport.texts.some((message) => message.text === 'Что сделать дальше?')).toBe(false)
+    expect(transport.texts.flatMap((message) => message.buttons?.flat() ?? []).some((button) => button.text === 'Продолжить')).toBe(false)
+    expect(transport.texts.flatMap((message) => message.buttons?.flat() ?? [])).toContainEqual(expect.objectContaining({ text: 'Открыть рекомендации' }))
   })
 })
 

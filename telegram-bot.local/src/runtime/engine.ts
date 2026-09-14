@@ -732,6 +732,7 @@ export class FunnelEngine {
       nodeId: run.nodeId,
       resultId: result.id,
       textDelivered: false,
+      actionsDelivered: false,
       mediaState: result.assetId ? 'pending' : 'not_needed',
     }
     session.state.awaiting = 'callback'
@@ -761,8 +762,16 @@ export class FunnelEngine {
     if (!test || !result) throw new Error(`PENDING_TEST_RESULT_NOT_FOUND:${pending.testId}:${pending.resultId}`)
 
     if (!pending.textDelivered) {
-      await this.sendText(user.externalUserId, this.render(version.document, session, [result.shortText, result.fullText, result.recommendations].filter(Boolean).join('\n\n')))
+      const rows = !result.assetId && result.buttons.length
+        ? await this.resultButtons(user, session, version.document, result.buttons, pending.nodeId, result.id)
+        : undefined
+      await this.sendText(
+        user.externalUserId,
+        this.render(version.document, session, [result.shortText, result.fullText, result.recommendations].filter(Boolean).join('\n\n')),
+        rows,
+      )
       pending.textDelivered = true
+      if (rows?.length) pending.actionsDelivered = true
       session = await this.save(session)
       pending = session.state.pendingTestResult!
       await this.event(session, 'result_viewed', { resultId: result.id, name: result.name }, `result:${pending.nodeId}:${result.id}`)
@@ -792,11 +801,18 @@ export class FunnelEngine {
       }
     }
 
-    const rows = await this.resultButtons(user, session, version.document, result.buttons, pending.nodeId, result.id)
-    if (!branchButtons(result.buttons).length) {
-      rows.push([{ text: 'Продолжить', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: pending.nodeId, handle: result.id }) }])
+    if (!result.buttons.length) {
+      session.state.pendingTestResult = undefined
+      session = await this.advanceAndSave(session, version.document, pending.nodeId, result.id)
+      await this.run(user, session)
+      return
     }
-    if (rows.length) await this.transport.sendText(user.externalUserId, 'Что сделать дальше?', rows)
+    if (!pending.actionsDelivered) {
+      const rows = await this.resultButtons(user, session, version.document, result.buttons, pending.nodeId, result.id)
+      if (rows.length) await this.transport.sendText(user.externalUserId, `Действия для результата «${this.render(version.document, session, result.name)}»`, rows)
+      pending.actionsDelivered = true
+      session = await this.save(session)
+    }
     session.state.pendingTestResult = undefined
     session = await this.save(session)
     await this.scheduleReminder(session, version.document, 'test')
@@ -812,16 +828,30 @@ export class FunnelEngine {
     const test = version.document.tests.find((item) => item.id === run.testId)!
     const rows: OutgoingButton[][] = []
     const answerIds = run.answerOrder[question.id] ?? question.answers.map((answer) => answer.id)
+    const vkOptionLines: string[] = []
     if (question.type === 'single' || (question.type === 'scale' && question.answers.length)) {
-      for (const answerId of answerIds) {
+      const buttons: OutgoingButton[] = []
+      for (const [index, answerId] of answerIds.entries()) {
         const answer = question.answers.find((item) => item.id === answerId)
-        if (answer) rows.push([{ text: this.render(version.document, session, answer.text), callbackToken: await this.store.createCallback(user.id, session.id, { type: 'test_single', nodeId: run.nodeId, testId: test.id, questionId: question.id, answerId }) }])
+        if (!answer) continue
+        const text = this.render(version.document, session, answer.text)
+        if (this.transport.platform === 'vk') vkOptionLines.push(`${index + 1}. ${text}`)
+        buttons.push({ text: this.transport.platform === 'vk' ? String(index + 1) : text, callbackToken: await this.store.createCallback(user.id, session.id, { type: 'test_single', nodeId: run.nodeId, testId: test.id, questionId: question.id, answerId }) })
       }
+      if (this.transport.platform === 'vk') rows.push(...chunkButtons(buttons, 5))
+      else rows.push(...buttons.map((button) => [button]))
     } else if (question.type === 'multiple') {
-      for (const answerId of answerIds) {
+      const buttons: OutgoingButton[] = []
+      for (const [index, answerId] of answerIds.entries()) {
         const answer = question.answers.find((item) => item.id === answerId)
-        if (answer) rows.push([{ text: `${run.selected.includes(answerId) ? '✅' : '▫️'} ${this.render(version.document, session, answer.text)}`, callbackToken: await this.store.createCallback(user.id, session.id, { type: 'test_toggle', nodeId: run.nodeId, testId: test.id, questionId: question.id, answerId }) }])
+        if (!answer) continue
+        const selected = run.selected.includes(answerId)
+        const text = this.render(version.document, session, answer.text)
+        if (this.transport.platform === 'vk') vkOptionLines.push(`${index + 1}. ${text}`)
+        buttons.push({ text: `${selected ? '✅' : '▫️'} ${this.transport.platform === 'vk' ? index + 1 : text}`, callbackToken: await this.store.createCallback(user.id, session.id, { type: 'test_toggle', nodeId: run.nodeId, testId: test.id, questionId: question.id, answerId }) })
       }
+      if (this.transport.platform === 'vk') rows.push(...chunkButtons(buttons, 5))
+      else rows.push(...buttons.map((button) => [button]))
       rows.push([{ text: 'Готово', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'test_submit', nodeId: run.nodeId, testId: test.id, questionId: question.id }) }])
     } else if (question.type === 'scale') {
       const min = Math.trunc(question.scaleMin ?? 1)
@@ -836,7 +866,8 @@ export class FunnelEngine {
     }
     if (!question.required) rows.push([{ text: 'Пропустить', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'test_skip', nodeId: run.nodeId, testId: test.id, questionId: question.id }) }])
     const counter = `${run.index + 1}/${run.questionOrder.length}`
-    await this.transport.sendText(user.externalUserId, `${counter}. ${this.render(version.document, session, question.text)}`, rows)
+    const questionText = `${counter}. ${this.render(version.document, session, question.text)}`
+    await this.transport.sendText(user.externalUserId, vkOptionLines.length ? `${questionText}\n\n${vkOptionLines.join('\n')}` : questionText, rows)
     await this.event(session, 'question_viewed', { testId: test.id, questionId: question.id }, `question_view:${question.id}:${run.index}`)
     session.state.awaiting = ['number', 'text'].includes(question.type) ? 'text' : 'callback'
     session.status = 'waiting'
@@ -1359,4 +1390,10 @@ function normalizeTelegramCommand(value: string | undefined): string | null {
   if (!token) return null
   const command = token.startsWith('/') ? token : `/${token}`
   return /^\/[a-z0-9_]+$/.test(command) ? command : null
+}
+
+function chunkButtons(buttons: OutgoingButton[], size: number) {
+  const rows: OutgoingButton[][] = []
+  for (let index = 0; index < buttons.length; index += size) rows.push(buttons.slice(index, index + size))
+  return rows
 }

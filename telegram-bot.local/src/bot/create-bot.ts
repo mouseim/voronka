@@ -83,6 +83,7 @@ export function createTelegramBot(
       await engine.handleOptOutCommand(toProfile(ctx.from), ctx.message.text)
       return
     }
+    if (await adminController.handleText(ctx)) return
     await engine.handleText(toProfile(ctx.from), ctx.message.text)
   })
 

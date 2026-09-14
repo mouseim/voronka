@@ -5,7 +5,8 @@ export interface VkLongPollServer {
 }
 
 export interface VkLongPollSettings {
-  enabled: boolean
+  is_enabled: boolean
+  enabled?: boolean
   api_version?: string
   events?: Record<string, boolean | number>
 }

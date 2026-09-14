@@ -7,7 +7,7 @@ import { MemoryRuntimeStore } from '../src/runtime/memory-store'
 import { VkApiClient, type VkApi, type VkLongPollServer } from '../src/vk/api'
 import { normalizeVkKeyboardRows, toVkKeyboard, VkTransport } from '../src/vk/transport'
 import { VkUpdateAdapter, type VkLongPollUpdate } from '../src/vk/updates'
-import { loadDemo } from './helpers'
+import { FakeTransport, loadDemo, profile } from './helpers'
 
 describe('VK MVP', () => {
   it('разделяет одинаковые external ID Telegram и VK', async () => {
@@ -84,6 +84,54 @@ describe('VK MVP', () => {
   it('возвращает controlled error вместо обрезки переполненной VK keyboard', () => {
     const rows = Array.from({ length: 31 }, (_, index) => [{ text: String(index), callbackToken: `cb-${index}` }])
     expect(() => toVkKeyboard(rows)).toThrow('VK_KEYBOARD_OVERFLOW:31:MAX_30')
+  })
+
+  it('показывает VK single варианты полностью в тексте и связывает цифры с shuffled answer ID', async () => {
+    const document = await testQuestionDocument('single', true)
+    const runtime = vkRuntime(document)
+    await runtime.adapter.handle(messageUpdate(505, 'Начать', 1))
+
+    const session = [...runtime.store.sessions.values()][0]!
+    const order = session.state.testRun!.answerOrder['question']!
+    const question = document.tests[0]!.questions[0]!
+    const message = runtime.api.messages.at(-1)!
+    order.forEach((answerId, index) => {
+      const answer = question.answers.find((item) => item.id === answerId)!
+      expect(message.message).toContain(`${index + 1}. ${answer.text}`)
+    })
+    const keyboard = JSON.parse(message.keyboard!) as { buttons: Array<Array<{ action: { label: string; payload: string } }>> }
+    const buttons = keyboard.buttons.flat()
+    expect(buttons.map((button) => button.action.label)).toEqual(order.map((_, index) => String(index + 1)))
+    buttons.forEach((button, index) => {
+      const token = (JSON.parse(button.action.payload) as { callbackToken: string }).callbackToken
+      expect(runtime.store.callbacks.get(token)?.action).toMatchObject({ type: 'test_single', answerId: order[index] })
+    })
+  })
+
+  it('показывает VK multiple цифрами и отмечает выбранный номер', async () => {
+    const document = await testQuestionDocument('multiple', false)
+    const runtime = vkRuntime(document)
+    await runtime.adapter.handle(messageUpdate(606, 'Начать', 1))
+    const initial = JSON.parse(runtime.api.messages.at(-1)!.keyboard!) as { buttons: Array<Array<{ action: { label: string; payload: string } }>> }
+    const first = initial.buttons.flat().find((button) => button.action.label === '▫️ 1')!
+    await runtime.adapter.handle(buttonUpdate(606, JSON.parse(first.action.payload), 'multiple-1'))
+
+    const updated = runtime.api.messages.at(-1)!
+    expect(updated.message).toContain('1. Очень длинный и понятный вариант ответа номер один')
+    const keyboard = JSON.parse(updated.keyboard!) as { buttons: Array<Array<{ action: { label: string } }>> }
+    expect(keyboard.buttons.flat().map((button) => button.action.label)).toEqual(expect.arrayContaining(['✅ 1', '▫️ 2', '▫️ 3', 'Готово']))
+  })
+
+  it('не меняет полные Telegram labels вариантов теста', async () => {
+    const document = await testQuestionDocument('single', false)
+    const store = new MemoryRuntimeStore()
+    store.install(document)
+    const transport = new FakeTransport()
+    await new FunnelEngine(store, transport).start(profile)
+
+    const questionMessage = transport.texts.at(-1)!
+    expect(questionMessage.text).not.toContain('\n\n1. Очень длинный')
+    expect(questionMessage.buttons?.flat().map((button) => button.text)).toEqual(document.tests[0]!.questions[0]!.answers.map((answer) => answer.text))
   })
 
   it('исполняет variables и conditions тем же FunnelEngine', async () => {
@@ -261,5 +309,38 @@ async function unsupportedProductDocument() {
   ]
   document.assets = []
   document.tests = []
+  return document
+}
+
+async function testQuestionDocument(type: 'single' | 'multiple', shuffleAnswers: boolean) {
+  const document = await loadDemo()
+  const start = document.nodes.find((node) => node.type === 'start')!
+  const sourceTest = structuredClone(document.tests[0]!)
+  const question = structuredClone(sourceTest.questions[0]!)
+  question.id = 'question'
+  question.type = type
+  question.shuffleAnswers = shuffleAnswers
+  question.required = true
+  question.answers = question.answers.slice(0, 3).map((answer, index) => ({
+    ...answer,
+    id: `answer-${index + 1}`,
+    text: ['Очень длинный и понятный вариант ответа номер один', 'Второй полный вариант, который нельзя сокращать', 'Третий развёрнутый вариант ответа'][index]!,
+  }))
+  sourceTest.questions = [question]
+  sourceTest.shuffleQuestions = false
+  sourceTest.combinedResults = []
+  sourceTest.results.forEach((result) => { result.assetId = undefined; result.buttons = [] })
+  document.tests = [sourceTest]
+  document.assets = []
+  document.products = []
+  document.nodes = [
+    start,
+    { id: 'test-node', type: 'test', data: { title: 'Тест', testId: sourceTest.id, welcomeText: '' } },
+    { id: 'end', type: 'end', data: { title: 'Конец', text: 'Готово' } },
+  ]
+  document.edges = [
+    { id: 'start-test', source: start.id, target: 'test-node', sourceHandle: 'next' },
+    ...sourceTest.results.map((result) => ({ id: `result-${result.id}`, source: 'test-node', target: 'end', sourceHandle: result.id })),
+  ]
   return document
 }
