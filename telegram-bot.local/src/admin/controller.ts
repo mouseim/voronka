@@ -10,11 +10,12 @@ import { toVkKeyboard } from '../vk/transport'
 
 type PrintTarget = 'tg' | 'vk' | 'all'
 type PrintButton = { text: string; url: string }
+const VERSION_PAGE_SIZE = 10
 
 type AdminAction =
   | { type: 'main' }
   | { type: 'funnels' }
-  | { type: 'versions'; funnelId: string }
+  | { type: 'versions'; funnelId: string; page?: number }
   | { type: 'version'; versionId: string }
   | { type: 'validate'; versionId: string }
   | { type: 'publish'; versionId: string; placeholders: boolean }
@@ -297,12 +298,23 @@ export class AdminController {
     }
     if (action.type === 'versions') {
       const rows = await this.repository.listVersions(action.funnelId)
-      await ctx.reply(rows.length ? rows.map((row) =>
+      const pageCount = Math.max(1, Math.ceil(rows.length / VERSION_PAGE_SIZE))
+      const page = Math.min(pageCount - 1, Math.max(0, Math.trunc(action.page ?? 0)))
+      const visibleRows = rows.slice(page * VERSION_PAGE_SIZE, (page + 1) * VERSION_PAGE_SIZE)
+      const keyboardRows: Array<Array<{ text: string; action: AdminAction }>> = visibleRows.map((row) => [{
+        text: `v${row.version} — ${row.status}`,
+        action: { type: 'version', versionId: row.id },
+      }])
+      if (pageCount > 1) {
+        const navigation: Array<{ text: string; action: AdminAction }> = []
+        if (page > 0) navigation.push({ text: '←', action: { type: 'versions', funnelId: action.funnelId, page: page - 1 } })
+        if (page < pageCount - 1) navigation.push({ text: '→', action: { type: 'versions', funnelId: action.funnelId, page: page + 1 } })
+        keyboardRows.push(navigation)
+      }
+      keyboardRows.push([{ text: '← К воронкам', action: { type: 'funnels' } }])
+      await ctx.reply(rows.length ? [`Версии · страница ${page + 1}/${pageCount}`, '', ...visibleRows.map((row) =>
         `v${row.version} · ${row.status} · сессий ${row.active_sessions} · файлов не хватает ${row.missing_media}`,
-      ).join('\n') : 'Версий нет.', { reply_markup: this.keyboard(adminId, [
-        ...rows.map((row) => [{ text: `v${row.version} — ${row.status}`, action: { type: 'version' as const, versionId: row.id } }]),
-        [{ text: '← К воронкам', action: { type: 'funnels' as const } }],
-      ]) })
+      )].join('\n') : 'Версий нет.', { reply_markup: this.keyboard(adminId, keyboardRows) })
       return
     }
     if (action.type === 'version') {

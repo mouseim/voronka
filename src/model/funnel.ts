@@ -36,7 +36,7 @@ export function defaultBotSettings(): BotSettings {
     username: '',
     timezone: 'Europe/Moscow',
     inactivityDays: 30,
-    quietHours: { enabled: true, from: '23:00', to: '09:00', behavior: 'postpone' },
+    quietHours: { enabled: false, from: '23:00', to: '09:00', behavior: 'postpone' },
     reentryPolicy: 'continue',
     optOut: {
       command: '/stop',
