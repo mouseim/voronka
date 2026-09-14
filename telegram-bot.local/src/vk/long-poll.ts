@@ -27,6 +27,7 @@ export class VkLongPollRunner {
   }
 
   private async loop() {
+    await diagnoseVkLongPollSettings(this.api, this.logger)
     let server = await this.api.getLongPollServer()
     while (!this.stopped) {
       const result = await this.poll(server)
@@ -57,5 +58,23 @@ export class VkLongPollRunner {
     } finally {
       this.controller = undefined
     }
+  }
+}
+
+export async function diagnoseVkLongPollSettings(api: VkApi, logger: Logger) {
+  if (!api.getLongPollSettings) return { checked: false, ready: null }
+  try {
+    const settings = await api.getLongPollSettings()
+    const messageNew = Boolean(settings.events?.message_new)
+    const messageEvent = Boolean(settings.events?.message_event)
+    const ready = Boolean(settings.enabled) && messageNew && messageEvent
+    if (!ready) {
+      logger.warn({ enabled: Boolean(settings.enabled), messageNew, messageEvent }, 'VK Long Poll настроен не полностью: требуются message_new=1 и message_event=1')
+    }
+    return { checked: true, ready }
+  } catch (error) {
+    const code = error instanceof Error ? error.message.split(':').slice(0, 2).join(':') : 'UNKNOWN'
+    logger.warn({ code }, 'Не удалось проверить настройки VK Long Poll')
+    return { checked: false, ready: null }
   }
 }

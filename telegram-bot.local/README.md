@@ -127,6 +127,38 @@ Production-путь:
 7. Опубликуйте версию.
 8. Сделайте опубликованную воронку default.
 
+### Перепривязка Telegram media после смены bot token
+
+Telegram `file_id` принадлежит боту, который получил файл. После смены
+`TELEGRAM_BOT_TOKEN` старые идентификаторы нельзя конвертировать или переносить.
+Runtime проверяет media активных версий через `getFile` при старте и пишет
+предупреждение без самого `file_id`. Для каждого отмеченного asset откройте
+`/admin` → воронка → версия → «Файлы» → asset → «Заменить» и отправьте исходный
+файл новому боту. «Тестовая отправка» позволяет проверить привязку. Эта операция
+заменяет только Telegram-привязку: VK media, версии, сессии, статистика и платежи
+не меняются.
+
+### Обязательные события VK Long Poll
+
+Для текстов нужны `message_new=1`, а для inline callback-кнопок —
+`message_event=1`. Runtime проверяет оба флага при старте и пишет warning, но не
+меняет настройки сообщества автоматически. Безопасная команда для включения
+нужных событий (запускайте в доверенном shell, где переменные уже загружены):
+
+```bash
+curl --fail-with-body --silent --show-error -X POST https://api.vk.com/method/groups.setLongPollSettings \
+  --data-urlencode "group_id=$VK_GROUP_ID" \
+  --data-urlencode "access_token=$VK_GROUP_TOKEN" \
+  --data-urlencode "v=$VK_API_VERSION" \
+  --data-urlencode "api_version=$VK_API_VERSION" \
+  --data-urlencode "enabled=1" \
+  --data-urlencode "message_new=1" \
+  --data-urlencode "message_event=1"
+```
+
+Токен не подставляйте в команду вручную и не публикуйте ответ API вместе с
+секретами.
+
 Для быстрого локального demo с mock‑оплатой и разрешёнными текстовыми
 заглушками:
 

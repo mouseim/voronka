@@ -4,6 +4,7 @@ import { AdminController } from './admin/controller'
 import { AdminRepository } from './admin/repository'
 import { createTelegramBot } from './bot/create-bot'
 import { GrammyTransport } from './bot/transport'
+import { diagnoseActiveTelegramMediaBindings } from './bot/media-diagnostics'
 import { loadConfig } from './config'
 import { migrate } from './db/migrate'
 import { createPool } from './db/pool'
@@ -88,6 +89,9 @@ let shuttingDown = false
 async function main() {
   await migrate(pool)
   await bot.init()
+  await diagnoseActiveTelegramMediaBindings(adminRepository, bot.api, logger).catch((error) => {
+    logger.warn({ code: error instanceof Error ? error.message.split(':', 1)[0] : 'UNKNOWN' }, 'Не удалось выполнить startup-проверку Telegram media bindings')
+  })
   await bot.api.setMyCommands([
     { command: 'start', description: 'Начать или продолжить прохождение' },
     { command: 'stop', description: 'Остановить сообщения и напоминания' },

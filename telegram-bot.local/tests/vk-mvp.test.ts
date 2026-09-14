@@ -5,7 +5,7 @@ import type { PlatformProfile } from '../src/domain/types'
 import { FunnelEngine } from '../src/runtime/engine'
 import { MemoryRuntimeStore } from '../src/runtime/memory-store'
 import { VkApiClient, type VkApi, type VkLongPollServer } from '../src/vk/api'
-import { VkTransport } from '../src/vk/transport'
+import { normalizeVkKeyboardRows, toVkKeyboard, VkTransport } from '../src/vk/transport'
 import { VkUpdateAdapter, type VkLongPollUpdate } from '../src/vk/updates'
 import { loadDemo } from './helpers'
 
@@ -55,6 +55,35 @@ describe('VK MVP', () => {
 
     const keyboard = JSON.parse(api.messages[0]!.keyboard!) as { buttons: Array<Array<{ action: Record<string, string> }>> }
     expect(keyboard.buttons[0]![0]!.action).toEqual({ type: 'open_link', link: 'https://example.com', label: 'Открыть' })
+  })
+
+  it.each([1, 2, 3, 4, 5, 6])('сохраняет допустимую VK раскладку из %i строк', (count) => {
+    const rows = Array.from({ length: count }, (_, index) => [{ text: String(index + 1), callbackToken: `cb-${index + 1}` }])
+    expect(normalizeVkKeyboardRows(rows)).toEqual(rows)
+  })
+
+  it.each([7, 10, 13])('уплотняет %i VK кнопок до лимитов 6×5 с сохранением порядка', (count) => {
+    const rows = Array.from({ length: count }, (_, index) => [{ text: String(index + 1), callbackToken: `cb-${index + 1}` }])
+    const normalized = normalizeVkKeyboardRows(rows)
+    expect(normalized.length).toBeLessThanOrEqual(6)
+    expect(normalized.every((row) => row.length <= 5)).toBe(true)
+    expect(normalized.flat().map((button) => button.text)).toEqual(Array.from({ length: count }, (_, index) => String(index + 1)))
+  })
+
+  it('сохраняет callback и URL actions при VK normalization', () => {
+    const rows = Array.from({ length: 7 }, (_, index) => index % 2
+      ? [{ text: `URL ${index}`, url: `https://example.com/${index}` }]
+      : [{ text: `CB ${index}`, callbackToken: `cb-${index}` }])
+    const keyboard = toVkKeyboard(rows)
+    const actions = keyboard.buttons.flat().map((button) => button.action)
+    expect(actions.map((action) => action.label)).toEqual(rows.flat().map((button) => button.text))
+    expect(actions.some((action) => action.type === 'callback' && 'payload' in action)).toBe(true)
+    expect(actions.some((action) => action.type === 'open_link' && 'link' in action)).toBe(true)
+  })
+
+  it('возвращает controlled error вместо обрезки переполненной VK keyboard', () => {
+    const rows = Array.from({ length: 31 }, (_, index) => [{ text: String(index), callbackToken: `cb-${index}` }])
+    expect(() => toVkKeyboard(rows)).toThrow('VK_KEYBOARD_OVERFLOW:31:MAX_30')
   })
 
   it('исполняет variables и conditions тем же FunnelEngine', async () => {

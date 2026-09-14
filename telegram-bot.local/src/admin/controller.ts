@@ -344,7 +344,11 @@ export class AdminController {
     if (action.type === 'media_test') {
       const row = (await this.repository.listMedia(action.versionId)).find((item) => item.asset_id === action.assetId)
       if (!row?.telegram_file_id) throw new Error('MEDIA_NOT_BOUND')
-      await sendMedia(this.bot, adminId, row.expected_type, row.telegram_file_id, `Тест: ${row.asset_key}`)
+      try {
+        await sendMedia(this.bot, adminId, row.expected_type, row.telegram_file_id, `Тест: ${row.asset_key}`)
+      } catch {
+        await ctx.reply('Telegram не принимает эту привязку для текущего бота. Нажмите «Заменить» и загрузите исходный файл заново; VK-привязка останется без изменений.')
+      }
       return
     }
     if (action.type === 'stats') {

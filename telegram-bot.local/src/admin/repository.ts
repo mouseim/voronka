@@ -486,6 +486,24 @@ export class AdminRepository {
     return result.rows
   }
 
+  async listActiveTelegramMediaBindings() {
+    const result = await this.pool.query<{
+      funnel_name: string
+      version: number
+      asset_key: string
+      telegram_file_id: string
+    }>(`
+      SELECT f.name AS funnel_name, fv.version, b.asset_key, r.telegram_file_id
+      FROM funnels f
+      JOIN funnel_versions fv ON fv.id = f.active_version_id
+      JOIN version_media_bindings b ON b.version_id = fv.id AND b.platform = 'telegram'
+      JOIN media_resources r ON r.id = b.resource_id
+      WHERE f.archived_at IS NULL AND fv.status = 'published'
+      ORDER BY f.name, b.asset_key
+    `)
+    return result.rows
+  }
+
   async productConfigs(versionId: string) {
     const result = await this.pool.query<ProductConfigRow>('SELECT * FROM runtime_product_configs WHERE version_id = $1', [versionId])
     return Object.fromEntries(result.rows.map((row) => [row.product_id, {

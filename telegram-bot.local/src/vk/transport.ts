@@ -35,10 +35,11 @@ export class VkTransport implements RuntimeTransport {
 }
 
 export function toVkKeyboard(rows: OutgoingButton[][]) {
+  const normalized = normalizeVkKeyboardRows(rows)
   return {
     one_time: false,
     inline: true,
-    buttons: rows.map((row) => row.map((button): VkKeyboardButton | null => {
+    buttons: normalized.map((row) => row.map((button): VkKeyboardButton => {
       if (button.url) return { action: { type: 'open_link', link: button.url, label: button.text } }
       if (button.callbackToken) return {
         action: {
@@ -48,9 +49,19 @@ export function toVkKeyboard(rows: OutgoingButton[][]) {
         },
         color: 'primary',
       }
-      return null
-    }).filter((button): button is VkKeyboardButton => button !== null)).filter((row) => row.length),
+      throw new Error('VK_KEYBOARD_BUTTON_ACTION_REQUIRED')
+    })),
   }
+}
+
+export function normalizeVkKeyboardRows(rows: OutgoingButton[][]): OutgoingButton[][] {
+  const nonEmptyRows = rows.filter((row) => row.length)
+  const buttons = nonEmptyRows.flat()
+  if (buttons.length > 30) throw new Error(`VK_KEYBOARD_OVERFLOW:${buttons.length}:MAX_30`)
+  if (nonEmptyRows.length <= 6 && nonEmptyRows.every((row) => row.length <= 5)) return nonEmptyRows
+  const normalized: OutgoingButton[][] = []
+  for (let index = 0; index < buttons.length; index += 5) normalized.push(buttons.slice(index, index + 5))
+  return normalized
 }
 
 type VkKeyboardButton =

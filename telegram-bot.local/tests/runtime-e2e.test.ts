@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { CallbackAction } from '../src/domain/types'
+import type { CallbackAction, DurableJob } from '../src/domain/types'
 import { FunnelEngine } from '../src/runtime/engine'
 import { MemoryRuntimeStore } from '../src/runtime/memory-store'
 import { FakeTransport, loadDemo, profile } from './helpers'
@@ -282,6 +282,85 @@ describe('E2E runtime с фальшивым Telegram transport', () => {
     await engine.handleJob(recovery!)
     expect(transport.texts.some((message) => message.text.includes('Здравствуйте'))).toBe(true)
     expect([...store.sessions.values()][0]?.status).toBe('waiting')
+  })
+
+  it('фиксирует финал теста до падающего result media и не дублирует его из recovery jobs', async () => {
+    const document = await loadDemo()
+    document.bot.quietHours.enabled = false
+    const store = new MemoryRuntimeStore()
+    const version = store.install(document, { allowPlaceholders: false })
+    store.bindMedia(version.id, {
+      assetId: 'asset_cover', assetKey: 'test_cover', expectedType: 'image',
+      platform: 'telegram', telegramFileId: 'valid-cover-file-id',
+    })
+    store.bindMedia(version.id, {
+      assetId: 'asset_guide', assetKey: 'personal_guide', expectedType: 'document',
+      platform: 'telegram', telegramFileId: 'old-bot-file-id',
+    })
+    const transport = new FakeTransport()
+    const sendMedia = transport.sendMedia.bind(transport)
+    let mediaAttempts = 0
+    transport.sendMedia = async (...args) => {
+      if (args[2].platform === 'telegram' && args[2].telegramFileId !== 'old-bot-file-id') return sendMedia(...args)
+      mediaAttempts += 1
+      throw new Error('wrong file identifier/HTTP URL specified')
+    }
+    const engine = new FunnelEngine(store, transport)
+    await engine.start(profile)
+    await click(store, engine, { type: 'advance', handle: 'button_test' })
+
+    let session = [...store.sessions.values()][0]!
+    const run = session.state.testRun!
+    const test = document.tests.find((item) => item.id === run.testId)!
+    for (const question of test.questions.filter((item) => item.enabled)) {
+      const first = question.answers[0]?.id
+      run.answers[question.id] = question.type === 'multiple' ? (first ? [first] : [])
+        : question.type === 'number' ? 1
+          : question.type === 'text' ? 'Ответ'
+            : question.type === 'scale' && !first ? (question.scaleMin ?? 1)
+              : first ?? ''
+    }
+    run.index = run.questionOrder.length
+    session.status = 'active'
+    session = await store.saveSession(session, session.revision)
+
+    const jobs: DurableJob[] = [1, 2, 3].map((index) => ({
+      id: `recovery-${index}`,
+      uniqueKey: `recovery-${index}`,
+      type: 'resume_session',
+      payload: { sessionId: session.id, nodeId: session.currentNodeId },
+      dueAt: new Date().toISOString(),
+      attempts: 1,
+      maxAttempts: 5,
+    }))
+    const attempts = await Promise.allSettled(jobs.map((job) => engine.handleJob(job)))
+    expect(attempts.filter((item) => item.status === 'rejected')).toHaveLength(2)
+
+    session = (await store.getSession(session.id))!
+    const result = [...test.results, ...test.combinedResults].find((item) => item.id === session.state.lastResultId)!
+    expect(transport.texts.filter((message) => message.text.includes(result.shortText))).toHaveLength(1)
+    expect(mediaAttempts).toBe(1)
+    expect(session.state.testRun).toBeUndefined()
+    expect(session.state.pendingTestResult).toMatchObject({ resultId: result.id, textDelivered: true, mediaState: 'failed_required' })
+    expect(session.status).toBe('waiting')
+    expect(store.events.filter((event) => event.type === 'test_completed')).toHaveLength(1)
+    expect(store.events.filter((event) => event.type === 'result_viewed')).toHaveLength(1)
+    expect([...store.jobs.values()].filter((job) => job.type === 'resume_session' && job.status === 'pending')).toHaveLength(0)
+
+    for (const job of jobs) await engine.handleJob(job)
+    expect(transport.texts.filter((message) => message.text.includes(result.shortText))).toHaveLength(1)
+    expect(mediaAttempts).toBe(1)
+
+    store.bindMedia(version.id, {
+      assetId: 'asset_guide', assetKey: 'personal_guide', expectedType: 'document',
+      platform: 'telegram', telegramFileId: 'new-bot-file-id',
+    })
+    transport.sendMedia = sendMedia
+    await click(store, engine, { type: 'retry_result_media' })
+    session = (await store.getSession(session.id))!
+    expect(session.state.pendingTestResult).toBeUndefined()
+    expect(transport.media).toContainEqual(expect.objectContaining({ fileId: 'new-bot-file-id' }))
+    expect(transport.texts.filter((message) => message.text.includes(result.shortText))).toHaveLength(1)
   })
 })
 

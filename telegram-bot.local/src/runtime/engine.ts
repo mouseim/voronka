@@ -98,6 +98,10 @@ export class FunnelEngine {
       await this.store.cancelSessionJobs(session.id)
       session = null
     }
+    if (session?.state.pendingTestResult) {
+      await this.run(user, session)
+      return
+    }
     if (session && document.bot.reentryPolicy === 'show_result' && session.state.lastResultName) {
       const restart = await this.store.createCallback(user.id, session.id, { type: 'restart', funnelId: session.funnelId })
       await this.transport.sendText(user.externalUserId, `Ваш последний результат: ${session.state.lastResultName}`, [
@@ -261,6 +265,12 @@ export class FunnelEngine {
     if (action.type === 'test_single' || action.type === 'test_value' || action.type === 'test_skip') {
       session = await this.applyTestAnswer(session, version.document, action)
       await this.continueTest(user, session, version)
+      return true
+    }
+    if (action.type === 'retry_result_media') {
+      const pending = session.state.pendingTestResult
+      if (!pending || pending.testId !== action.testId || pending.resultId !== action.resultId) return false
+      await this.deliverPendingTestResult(user, session, version)
       return true
     }
     if (action.type === 'test_toggle') {
@@ -484,6 +494,10 @@ export class FunnelEngine {
     let session = initialSession
     const version = await this.requireVersion(session.versionId)
     const document = version.document
+    if (session.state.pendingTestResult) {
+      await this.deliverPendingTestResult(user, session, version)
+      return
+    }
     if (!session.state.variables) session.state.variables = initialVariableValues(document.variables)
     for (let automatic = 0; automatic < this.transitionLimit; automatic += 1) {
       if (!session.currentNodeId) return
@@ -608,19 +622,29 @@ export class FunnelEngine {
 
   private async sendAsset(user: RuntimeUser, session: RuntimeSession, version: FunnelVersionRecord, assetId: string, caption = '', requiredOverride?: boolean) {
     const asset = version.document.assets.find((item) => item.id === assetId)
-    if (!asset) return
+    if (!asset) return 'optional_missing' as const
     const binding = await this.store.getMediaBinding(version.id, assetId, this.transport.platform)
     if (binding) {
       const captionChars = Array.from(caption)
-      await this.transport.sendMedia(user.externalUserId, asset.type, binding, captionChars.slice(0, 1024).join(''))
+      try {
+        await this.transport.sendMedia(user.externalUserId, asset.type, binding, captionChars.slice(0, 1024).join(''))
+      } catch {
+        await this.event(session, 'media_delivery_failed', { assetId, type: asset.type, platform: this.transport.platform }, `media_delivery_failed:${assetId}`)
+        const notified = session.state.missingMediaNotified ?? []
+        if (!notified.includes(assetId)) {
+          await this.transport.notifyAdministrators(`Привязанный файл ${asset.id}/${asset.key} не доставляется в ${this.transport.platform}. Перепривяжите файл через админку.`)
+          session.state.missingMediaNotified = [...notified, assetId]
+        }
+        throw new Error(`MEDIA_DELIVERY_FAILED:${this.transport.platform}:${assetId}`)
+      }
       if (captionChars.length > 1024) await this.sendText(user.externalUserId, captionChars.slice(1024).join(''))
       await this.event(session, 'media_sent', { assetId, type: asset.type }, `media:${assetId}:${session.revision}`)
-      return
+      return 'delivered' as const
     }
     const required = requiredOverride ?? asset.required
     if (!required) {
       await this.event(session, 'media_missing', { assetId, optional: true }, `media_missing:${assetId}:${session.revision}`)
-      return
+      return 'optional_missing' as const
     }
     const placeholder = `[Здесь должен быть файл: «${asset.name}», тип: ${asset.type}]`
     if (version.allowPlaceholders) await this.sendText(user.externalUserId, placeholder)
@@ -631,6 +655,7 @@ export class FunnelEngine {
       session.state.missingMediaNotified = [...notified, assetId]
     }
     if (!version.allowPlaceholders) throw new Error(`REQUIRED_MEDIA_MISSING:${assetId}`)
+    return 'required_placeholder' as const
   }
 
   private async scheduleTimer(session: RuntimeSession, document: FunnelDocument, node: FunnelNode) {
@@ -701,6 +726,18 @@ export class FunnelEngine {
     session.state.lastResultId = result.id
     session.state.lastResultName = result.name
     session.state.lastTestId = test.id
+    session.state.testRun = undefined
+    session.state.pendingTestResult = {
+      testId: test.id,
+      nodeId: run.nodeId,
+      resultId: result.id,
+      textDelivered: false,
+      mediaState: result.assetId ? 'pending' : 'not_needed',
+    }
+    session.state.awaiting = 'callback'
+    session.status = 'waiting'
+    session = await this.save(session)
+    await this.store.cancelSessionJobs(session.id, ['resume_session'])
     await this.event(session, 'test_completed', {
       testId: test.id,
       scores: calculated.scores,
@@ -709,20 +746,60 @@ export class FunnelEngine {
       primaryResultId: calculated.primary.id,
       secondaryResultId: calculated.secondary?.id,
       chosenResultId: result.id,
-    }, `test_complete:${run.nodeId}:${session.revision}`)
-    await this.sendText(user.externalUserId, this.render(version.document, session, [result.shortText, result.fullText, result.recommendations].filter(Boolean).join('\n\n')))
-    if (result.assetId) await this.sendAsset(user, session, version, result.assetId)
-    const rows = await this.resultButtons(user, session, version.document, result.buttons, run.nodeId, result.id)
+    }, `test_complete:${run.nodeId}:${test.id}`)
+    await this.deliverPendingTestResult(user, session, version)
+  }
+
+  private async deliverPendingTestResult(user: RuntimeUser, initialSession: RuntimeSession, version: FunnelVersionRecord) {
+    let session = initialSession
+    let pending = session.state.pendingTestResult
+    if (!pending) return
+    const pendingTestId = pending.testId
+    const pendingResultId = pending.resultId
+    const test = version.document.tests.find((item) => item.id === pendingTestId)
+    const result = [...(test?.results ?? []), ...(test?.combinedResults ?? [])].find((item) => item.id === pendingResultId)
+    if (!test || !result) throw new Error(`PENDING_TEST_RESULT_NOT_FOUND:${pending.testId}:${pending.resultId}`)
+
+    if (!pending.textDelivered) {
+      await this.sendText(user.externalUserId, this.render(version.document, session, [result.shortText, result.fullText, result.recommendations].filter(Boolean).join('\n\n')))
+      pending.textDelivered = true
+      session = await this.save(session)
+      pending = session.state.pendingTestResult!
+      await this.event(session, 'result_viewed', { resultId: result.id, name: result.name }, `result:${pending.nodeId}:${result.id}`)
+    }
+
+    if (result.assetId && !['delivered', 'skipped_optional'].includes(pending.mediaState)) {
+      const asset = version.document.assets.find((item) => item.id === result.assetId)
+      const required = asset?.required ?? false
+      try {
+        const outcome = await this.sendAsset(user, session, version, result.assetId, '', required)
+        pending.mediaState = outcome === 'delivered' ? 'delivered' : required ? 'delivered' : 'skipped_optional'
+        session = await this.save(session)
+        pending = session.state.pendingTestResult!
+      } catch {
+        pending.mediaState = required ? 'failed_required' : 'skipped_optional'
+        session = await this.save(session)
+        pending = session.state.pendingTestResult!
+        if (required) {
+          const retry = await this.store.createCallback(user.id, session.id, {
+            type: 'retry_result_media', nodeId: pending.nodeId, testId: pending.testId, resultId: pending.resultId,
+          })
+          await this.transport.sendText(user.externalUserId, 'Обязательный материал результата временно недоступен. Администратор уже уведомлён. После перепривязки файла повторите загрузку.', [[
+            { text: 'Повторить загрузку', callbackToken: retry },
+          ]])
+          return
+        }
+      }
+    }
+
+    const rows = await this.resultButtons(user, session, version.document, result.buttons, pending.nodeId, result.id)
     if (!branchButtons(result.buttons).length) {
-      rows.push([{ text: 'Продолжить', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: run.nodeId, handle: result.id }) }])
+      rows.push([{ text: 'Продолжить', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: pending.nodeId, handle: result.id }) }])
     }
     if (rows.length) await this.transport.sendText(user.externalUserId, 'Что сделать дальше?', rows)
-    await this.event(session, 'result_viewed', { resultId: result.id, name: result.name }, `result:${result.id}:${session.revision}`)
-    session.state.testRun = undefined
-    session.state.awaiting = 'callback'
-    session.status = 'waiting'
+    session.state.pendingTestResult = undefined
+    session = await this.save(session)
     await this.scheduleReminder(session, version.document, 'test')
-    await this.save(session)
   }
 
   private async askTestQuestion(user: RuntimeUser, session: RuntimeSession, version: FunnelVersionRecord) {

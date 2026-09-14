@@ -53,10 +53,19 @@ export interface FormRunState {
   values: Record<string, string>
 }
 
+export interface TestResultDeliveryState {
+  testId: string
+  nodeId: string
+  resultId: string
+  textDelivered: boolean
+  mediaState: 'not_needed' | 'pending' | 'delivered' | 'skipped_optional' | 'failed_required'
+}
+
 export interface SessionState {
   platform?: Platform
   awaiting?: 'callback' | 'text' | 'timer' | 'payment'
   testRun?: TestRunState
+  pendingTestResult?: TestResultDeliveryState
   formRun?: FormRunState
   pendingFormSubmission?: { values: Record<string, string> }
   lastResultId?: string
@@ -90,6 +99,7 @@ export type CallbackAction =
   | { type: 'test_submit'; nodeId: string; testId: string; questionId: string }
   | { type: 'test_value'; nodeId: string; testId: string; questionId: string; value: number }
   | { type: 'test_skip'; nodeId: string; testId: string; questionId: string }
+  | { type: 'retry_result_media'; nodeId: string; testId: string; resultId: string }
   | { type: 'consent'; nodeId: string; accepted: boolean }
   | { type: 'form_cancel'; nodeId: string }
   | { type: 'product_buy'; nodeId: string; productId: string }

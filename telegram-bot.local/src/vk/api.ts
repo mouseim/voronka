@@ -4,9 +4,16 @@ export interface VkLongPollServer {
   ts: string
 }
 
+export interface VkLongPollSettings {
+  enabled: boolean
+  api_version?: string
+  events?: Record<string, boolean | number>
+}
+
 export interface VkApi {
   sendMessage(peerId: string, message: string, keyboard?: string, attachment?: string): Promise<number>
   getLongPollServer(): Promise<VkLongPollServer>
+  getLongPollSettings?(): Promise<VkLongPollSettings>
   answerMessageEvent(eventId: string, userId: string, peerId: string): Promise<void>
   getMessagesPhotoUploadServer(peerId: string): Promise<VkUploadServer>
   saveMessagesPhoto(upload: VkPhotoUploadResult): Promise<VkSavedPhoto[]>
@@ -41,6 +48,10 @@ export class VkApiClient implements VkApi {
 
   async getLongPollServer() {
     return this.request<VkLongPollServer>('groups.getLongPollServer', { group_id: this.groupId })
+  }
+
+  async getLongPollSettings() {
+    return this.request<VkLongPollSettings>('groups.getLongPollSettings', { group_id: this.groupId })
   }
 
   async answerMessageEvent(eventId: string, userId: string, peerId: string) {
