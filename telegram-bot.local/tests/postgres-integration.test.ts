@@ -256,6 +256,24 @@ describe('PostgreSQL import/publish/version integration', () => {
         INSERT INTO funnel_versions(funnel_id, version, schema_version, status, content_hash, raw_document)
         VALUES ($1, 3, '3.0.0', 'draft', 'draft-only-hash', $2::jsonb)
       `, [first.funnelId, JSON.stringify(draftOnly)])
+
+      // Конструктор должен видеть последнюю серверную draft-версию,
+      // даже если runtime продолжает использовать опубликованную active v2.
+      expect(await admin.listEditorFunnels()).toEqual([
+        expect.objectContaining({
+          id: document.funnel.id,
+          activeVersion: 3,
+          publishedAt: null,
+        }),
+      ])
+      expect(await admin.getEditorFunnel(document.funnel.id)).toMatchObject({
+        funnel: {
+          id: document.funnel.id,
+          version: 3,
+          status: 'draft',
+        },
+      })
+
       expect(await admin.listEditorFunnelVersions(document.funnel.id)).toEqual([
         expect.objectContaining({ version: 2, active: true }),
         expect.objectContaining({ version: 1, active: false }),

@@ -422,11 +422,18 @@ export class AdminRepository {
   async listEditorFunnels() {
     const result = await this.pool.query<EditorFunnelRow>(`
       SELECT f.source_funnel_id, f.name, f.default_for_bot, f.updated_at,
-             fv.version AS active_version, fv.published_at,
-             jsonb_array_length(fv.raw_document->'nodes')::int AS node_count
+             latest.version AS active_version, latest.published_at,
+             jsonb_array_length(latest.raw_document->'nodes')::int AS node_count
       FROM funnels f
-      JOIN funnel_versions fv ON fv.id = f.active_version_id
-      WHERE fv.status = 'published' AND f.archived_at IS NULL
+      JOIN LATERAL (
+        SELECT fv.version, fv.published_at, fv.raw_document
+        FROM funnel_versions fv
+        WHERE fv.funnel_id = f.id
+          AND fv.hidden_at IS NULL
+        ORDER BY fv.version DESC
+        LIMIT 1
+      ) latest ON true
+      WHERE f.archived_at IS NULL
       ORDER BY f.updated_at DESC
     `)
     return result.rows.map((row) => ({
@@ -441,17 +448,29 @@ export class AdminRepository {
   }
 
   async getEditorFunnel(sourceFunnelId: string) {
-    const result = await this.pool.query<{ raw_document: FunnelDocument; version: number }>(`
-      SELECT fv.raw_document, fv.version
+    const result = await this.pool.query<{
+      raw_document: FunnelDocument
+      version: number
+      status: FunnelDocument['funnel']['status']
+    }>(`
+      SELECT latest.raw_document, latest.version, latest.status
       FROM funnels f
-      JOIN funnel_versions fv ON fv.id = f.active_version_id
-      WHERE f.source_funnel_id = $1 AND fv.status = 'published' AND f.archived_at IS NULL
+      JOIN LATERAL (
+        SELECT fv.raw_document, fv.version, fv.status
+        FROM funnel_versions fv
+        WHERE fv.funnel_id = f.id
+          AND fv.hidden_at IS NULL
+        ORDER BY fv.version DESC
+        LIMIT 1
+      ) latest ON true
+      WHERE f.source_funnel_id = $1
+        AND f.archived_at IS NULL
     `, [sourceFunnelId])
     const row = result.rows[0]
     if (!row) return null
     const document = structuredClone(row.raw_document)
     document.funnel.version = row.version
-    document.funnel.status = 'published'
+    document.funnel.status = row.status
     document.analytics = emptyAnalytics(row.version)
     return document
   }
