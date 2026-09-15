@@ -16,7 +16,7 @@ type AdminButton = {
   action: AdminAction
   style?: 'success' | 'danger' | 'primary'
 }
-const VERSION_PAGE_SIZE = 10
+const VERSION_PAGE_SIZE = 5
 
 type AdminAction =
   | { type: 'main' }

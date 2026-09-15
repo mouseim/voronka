@@ -166,9 +166,9 @@ test('чистый браузер загружает VPS-воронку, сох�
   await page.getByRole('dialog', { name: 'Есть изменения на этом устройстве' }).getByRole('button', { name: 'Загрузить опубликованную версию' }).click()
   await expect(page.getByLabel('Название воронки')).toHaveValue(serverDocument.funnel.name)
   await page.getByLabel('Название воронки').fill('Опубликовано со второго устройства')
-  await page.getByRole('button', { name: 'Опубликовать в Telegram и VK' }).click()
-  await expect(page.getByText(/Опубликовано в Telegram и VK: версия 2/)).toBeVisible()
-  await page.getByRole('button', { name: 'Опубликовать в Telegram и VK' }).click()
+  await page.getByRole('button', { name: 'Опубликовать и сделать активной' }).click()
+  await expect(page.getByText(/Версия 2 опубликована и сделана активной/)).toBeVisible()
+  await page.getByRole('button', { name: 'Опубликовать и сделать активной' }).click()
   await expect(page.getByText(/новая версия не создавалась/)).toBeVisible()
   expect(publishCount).toBe(2)
 
