@@ -81,7 +81,14 @@ export function Preview({ document, onClose }: { document: FunnelDocument; onClo
                 {node.type === 'start' && <BotBubble text="Готовы начать?" />}
                 {node.type === 'message' && <MessagePreview data={{ ...(node.data as MessageData), text: render((node.data as MessageData).text), buttons: (node.data as MessageData).buttons.map((button) => ({ ...button, text: render(button.text) })) }} onBranch={go} />}
                 {node.type === 'media' && <MediaPreview document={document} data={{ ...(node.data as MediaData), caption: render((node.data as MediaData).caption) }} onNext={() => go()} />}
-                {node.type === 'timer' && <TimerPreview data={node.data as TimerData} onNext={(minutes) => { setElapsed((value) => value + minutes); go() }} />}
+                {node.type === 'timer' && <TimerPreview
+                  data={node.data as TimerData}
+                  onImmediate={() => go('immediate')}
+                  onDelayed={(minutes) => {
+                    setElapsed((value) => value + minutes)
+                    go((node.data as TimerData).background ? 'delayed' : 'next')
+                  }}
+                />}
                 {node.type === 'variable' && <VariablePreview document={document} data={node.data as VariableData} variables={variables} onApply={() => {
                   const next = applyVariableOperations(document.variables, variables, (node.data as VariableData).operations)
                   go('next', next)
@@ -137,9 +144,46 @@ function MediaPreview({ document, data, onNext }: { document: FunnelDocument; da
   return <><div className="media-placeholder"><FileImage size={34} /><strong>{asset?.name ?? 'Материал не выбран'}</strong><span>{asset ? mediaLabel(asset.type) : 'Заглушка'}</span></div>{data.caption && <BotBubble text={data.caption} />}<div className="telegram-buttons"><button onClick={onNext}>Продолжить</button></div></>
 }
 
-function TimerPreview({ data, onNext }: { data: TimerData; onNext: (minutes: number) => void }) {
-  const minutes = data.duration * (data.unit === 'days' ? 1440 : data.unit === 'hours' ? 60 : 1)
-  return <div className="timer-preview"><Clock3 size={30} /><strong>Пауза: {data.duration} {unitLabel(data.unit)}</strong><p>{data.respectQuietHours ? 'Тихие часы будут учтены.' : 'Продолжение без учёта тихих часов.'}</p><button className="button primary" onClick={() => onNext(minutes)}>Перемотать время</button></div>
+function TimerPreview({
+  data,
+  onImmediate,
+  onDelayed,
+}: {
+  data: TimerData
+  onImmediate: () => void
+  onDelayed: (minutes: number) => void
+}) {
+  const minutes = data.duration * (
+    data.unit === 'days'
+      ? 1440
+      : data.unit === 'hours'
+        ? 60
+        : data.unit === 'seconds'
+          ? 1 / 60
+          : 1
+  )
+
+  return <div className="timer-preview">
+    <Clock3 size={30} />
+    <strong>Пауза: {data.duration} {unitLabel(data.unit)}</strong>
+    <p>
+      {data.background
+        ? 'Фоновый таймер: основная ветка может продолжиться сразу, а отложенную можно проверить отдельно.'
+        : data.respectQuietHours
+          ? 'Тихие часы будут учтены.'
+          : 'Продолжение без учёта тихих часов.'}
+    </p>
+
+    {data.background && (
+      <button className="button secondary" onClick={onImmediate}>
+        Продолжить сразу
+      </button>
+    )}
+
+    <button className="button primary" onClick={() => onDelayed(minutes)}>
+      Перемотать время
+    </button>
+  </div>
 }
 
 function TestPreview({ test, answers, setAnswers, calculation, onCalculate, onNext }: { test: FunnelDocument['tests'][number]; answers: Record<string, string | string[] | number>; setAnswers: (answers: Record<string, string | string[] | number>) => void; calculation: ReturnType<typeof calculateTestResult> | null; onCalculate: () => void; onNext: (resultId: string) => void }) {
