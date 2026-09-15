@@ -74,6 +74,7 @@ export class MemoryRuntimeStore implements RuntimeStore {
     if (existing) {
       existing.username = profile.username
       existing.firstName = profile.firstName
+      if (profile.timezone) existing.timezone = profile.timezone
       return structuredClone(existing)
     }
     const user: RuntimeUser = {
@@ -82,6 +83,7 @@ export class MemoryRuntimeStore implements RuntimeStore {
       externalUserId: profile.externalUserId,
       username: profile.username,
       firstName: profile.firstName,
+      timezone: profile.timezone,
       optedOutAt: null,
       backgroundBlocked: false,
     }
@@ -107,14 +109,13 @@ export class MemoryRuntimeStore implements RuntimeStore {
   }
 
   async stopUserSessions(userId: string) {
-    const stopped: string[] = []
+    const sessionIds: string[] = []
     this.sessions.forEach((session) => {
-      if (session.userId === userId && ['active', 'waiting'].includes(session.status)) {
-        session.status = 'stopped'
-        stopped.push(session.id)
-      }
+      if (session.userId !== userId) return
+      sessionIds.push(session.id)
+      if (['active', 'waiting'].includes(session.status)) session.status = 'stopped'
     })
-    return stopped
+    return sessionIds
   }
 
   async resolveVersion(trackingCode?: string) {
@@ -162,6 +163,11 @@ export class MemoryRuntimeStore implements RuntimeStore {
 
   async getSession(sessionId: string) {
     const found = this.sessions.get(sessionId)
+    return found ? structuredClone(found) : null
+  }
+
+  async findBackgroundSession(jobKey: string) {
+    const found = [...this.sessions.values()].find((session) => session.state.backgroundJobKey === jobKey)
     return found ? structuredClone(found) : null
   }
 

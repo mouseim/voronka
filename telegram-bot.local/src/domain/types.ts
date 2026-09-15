@@ -13,6 +13,7 @@ export interface PlatformProfile {
   firstName?: string
   lastName?: string
   languageCode?: string
+  timezone?: string
 }
 
 export type TelegramProfile = PlatformProfile & { platform: 'telegram' }
@@ -24,6 +25,7 @@ export interface RuntimeUser {
   externalUserId: string
   username?: string
   firstName?: string
+  timezone?: string
   optedOutAt?: string | null
   backgroundBlocked: boolean
 }
@@ -76,6 +78,7 @@ export interface SessionState {
   remindersSent?: number
   missingMediaNotified?: string[]
   variables?: Record<string, VariableValue>
+  backgroundJobKey?: string
 }
 
 export interface RuntimeSession {
@@ -213,7 +216,7 @@ export interface AnalyticsEvent {
 export interface DurableJob {
   id: string
   uniqueKey: string
-  type: 'timer_continue' | 'reminder' | 'redirect_continue' | 'resume_session' | 'payment_reconcile'
+  type: 'timer_continue' | 'background_timer' | 'reminder' | 'redirect_continue' | 'resume_session' | 'payment_reconcile'
   payload: Record<string, unknown>
   dueAt: string
   attempts: number

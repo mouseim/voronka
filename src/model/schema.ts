@@ -37,7 +37,12 @@ const nodeSchema = z.discriminatedUnion('type', [
   node('start', base),
   node('message', base.extend({ text: z.string(), buttons: z.array(messageButton) })),
   node('media', base.extend({ assetId: z.string().optional(), caption: z.string(), required: z.boolean() })),
-  node('timer', base.extend({ duration: z.number().finite().positive(), unit: z.enum(['seconds', 'minutes', 'hours', 'days']), respectQuietHours: z.boolean() })),
+  node('timer', base.extend({
+    duration: z.number().finite().positive(),
+    unit: z.enum(['seconds', 'minutes', 'hours', 'days']),
+    respectQuietHours: z.boolean(),
+    background: z.boolean().default(false),
+  })),
   node('variable', base.extend({ operations: z.array(variableOperation) })),
   node('condition', base.extend({
     variableId: z.string().optional(),
@@ -223,7 +228,13 @@ const documentSchema = z.object({
     quietHours: z.object({ enabled: z.boolean(), from: z.string(), to: z.string(), behavior: z.enum(['postpone', 'skip']) }).passthrough(),
     reentryPolicy: z.enum(['continue', 'restart', 'show_result']),
     optOut: z.object({ command: z.string(), confirmationText: z.string(), blockBackground: z.boolean(), allowRestart: z.boolean() }).passthrough(),
-    reminders: z.object({ maxCount: z.number().int().nonnegative(), cancelAfterContinue: z.boolean(), respectQuietHours: z.boolean() }).passthrough(),
+    reminders: z.object({
+      maxCount: z.number().int().nonnegative(),
+      cancelAfterContinue: z.boolean(),
+      respectQuietHours: z.boolean(),
+      testText: z.string().default('Продолжим тест? Ваши ответы сохранены.'),
+      stageText: z.string().default('Продолжим? Вы остановились на важном этапе.'),
+    }).passthrough(),
     trackingLinks: z.array(trackingLinkSchema),
   }).passthrough(),
   variables: z.array(variableSchema),

@@ -5,10 +5,11 @@ export function applyQuietHours(
   date: Date,
   document: FunnelDocument,
   enabledForAction: boolean,
+  userTimezone?: string | null,
 ): { date: Date | null; disposition: 'unchanged' | 'postponed' | 'skipped' } {
   const settings = document.bot.quietHours
   if (!enabledForAction || !settings.enabled) return { date, disposition: 'unchanged' }
-  const zone = document.bot.timezone || 'Europe/Moscow'
+  const zone = userTimezone || document.bot.timezone || 'Europe/Moscow'
   const local = DateTime.fromJSDate(date, { zone })
   if (!local.isValid) return { date, disposition: 'unchanged' }
   const from = parseClock(settings.from)

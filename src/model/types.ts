@@ -70,6 +70,7 @@ export interface TimerData extends BaseNodeData {
   duration: number
   unit: TimerUnit
   respectQuietHours: boolean
+  background?: boolean
 }
 
 export interface VariableOperation {
@@ -313,6 +314,8 @@ export interface BotSettings {
     maxCount: number
     cancelAfterContinue: boolean
     respectQuietHours: boolean
+    testText: string
+    stageText: string
   }
   trackingLinks: TrackingLink[]
 }

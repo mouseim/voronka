@@ -1,5 +1,5 @@
 import { parseAndMigrateFunnelDocument } from '../model/schema'
-import { emptyAnalytics } from '../model/funnel'
+import { defaultBotSettings, emptyAnalytics } from '../model/funnel'
 import type { DraftRevision, DraftSummary, FunnelDocument } from '../model/types'
 import { validateFunnel } from '../model/validation'
 
@@ -159,6 +159,13 @@ export function documentsMatchForSync(left: FunnelDocument, right: FunnelDocumen
 
 function syncComparable(source: FunnelDocument) {
   const document = structuredClone(source)
+  const defaults = defaultBotSettings()
+  document.bot.reminders = { ...defaults.reminders, ...document.bot.reminders }
+  document.nodes.forEach((node) => {
+    if (node.type === 'timer') {
+      ;(node.data as { background?: boolean }).background ??= false
+    }
+  })
   document.bot.trackingLinks = document.bot.trackingLinks.map((link) => ({
     ...link,
     platform: link.platform ?? 'telegram',

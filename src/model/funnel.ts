@@ -12,6 +12,7 @@ import type {
   Position,
   ProductBlockData,
   TestBlockData,
+  TimerData,
   VariableData,
 } from './types'
 
@@ -44,7 +45,13 @@ export function defaultBotSettings(): BotSettings {
       blockBackground: true,
       allowRestart: true,
     },
-    reminders: { maxCount: 3, cancelAfterContinue: true, respectQuietHours: true },
+    reminders: {
+      maxCount: 3,
+      cancelAfterContinue: true,
+      respectQuietHours: true,
+      testText: 'Продолжим тест? Ваши ответы сохранены.',
+      stageText: 'Продолжим? Вы остановились на важном этапе.',
+    },
     trackingLinks: [],
   }
 }
@@ -72,7 +79,7 @@ export function createNode(type: NodeType, _position?: Position): FunnelNode {
     start: { title: 'Старт' },
     message: { title: 'Новое сообщение', text: 'Введите текст сообщения', buttons: [] },
     media: { title: 'Материал', assetId: undefined, caption: '', required: true },
-    timer: { title: 'Пауза', duration: 1, unit: 'hours', respectQuietHours: true },
+    timer: { title: 'Пауза', duration: 1, unit: 'hours', respectQuietHours: true, background: false },
     variable: {
       title: 'Изменить переменную',
       operations: [{ id: newId('operation'), variableId: undefined, operation: 'set', value: '' }],
@@ -228,8 +235,14 @@ export function nodeHandles(node: FunnelNode, document?: FunnelDocument): NodeHa
     return handles
   }
   if (node.type === 'form') return [{ id: 'submitted', label: 'Форма отправлена' }, { id: 'cancelled', label: 'Отмена' }]
+  if (node.type === 'timer') {
+    const data = node.data as TimerData
+    return data.background
+      ? [{ id: 'immediate', label: 'Сразу' }, { id: 'delayed', label: 'После таймера' }]
+      : [{ id: 'next', label: 'После паузы' }]
+  }
   if (node.type === 'end') return []
-  return [{ id: 'next', label: node.type === 'timer' ? 'После паузы' : 'Далее' }]
+  return [{ id: 'next', label: 'Далее' }]
 }
 
 export function edgeLabel(document: FunnelDocument, sourceId: string, handle: string | null | undefined): string | undefined {

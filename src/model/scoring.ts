@@ -18,29 +18,62 @@ export function calculateTestResult(test: FunnelTest, answers: Record<string, An
     })
   })
 
+  // ТЗ V2: нормализованный процент округляется до целого ДО выбора результата.
   const percentages = Object.fromEntries(test.scales.map((scale) => {
     const maximum = maximums[scale.id]
-    return [scale.id, maximum > 0 ? Math.max(0, Math.min(100, scores[scale.id] / maximum * 100)) : 0]
+    const percentage = maximum > 0 ? Math.max(0, Math.min(100, scores[scale.id] / maximum * 100)) : 0
+    return [scale.id, Math.round(percentage)]
   }))
 
-  const ordered = [...test.scales].sort((left, right) => {
+  const byPercentage = [...test.scales].sort((left, right) => {
     const difference = percentages[right.id] - percentages[left.id]
     return difference || test.scales.indexOf(left) - test.scales.indexOf(right)
   })
-  const primaryScale = ordered[0]
-  const secondaryScale = ordered[1]
+
+  const percentageLeader = byPercentage[0]!
+  const threshold = test.calculation.proximityThreshold
+
+  // ТЗ V2: если в коридор < 8 п.п. попали 3+ шкалы,
+  // итоговую пару выбираем по сырым баллам, а не по процентам.
+  const corridor = byPercentage.filter((scale) =>
+    scale.id === percentageLeader.id
+    || percentages[percentageLeader.id] - percentages[scale.id] < threshold
+  )
+
+  let primaryScale = byPercentage[0]!
+  let secondaryScale = byPercentage[1]
+
+  if (corridor.length >= 3) {
+    const byRawScore = [...corridor].sort((left, right) => {
+      const scoreDifference = scores[right.id] - scores[left.id]
+      if (scoreDifference) return scoreDifference
+      const percentageDifference = percentages[right.id] - percentages[left.id]
+      return percentageDifference || test.scales.indexOf(left) - test.scales.indexOf(right)
+    })
+    primaryScale = byRawScore[0]!
+    secondaryScale = byRawScore[1]
+  }
+
   const primary = resultForScale(test, primaryScale.id)
   const secondary = secondaryScale ? test.results.find((result) => result.scaleId === secondaryScale.id) : undefined
-  const close = Boolean(secondary && Math.abs(percentages[primaryScale.id] - percentages[secondaryScale.id]) <= test.calculation.proximityThreshold)
-  const combined = close && test.calculation.useCombinedResults
+
+  // В ТЗ именно "меньше 8", а не "<= 8".
+  const close = Boolean(
+    secondary
+    && Math.abs(percentages[primaryScale.id] - percentages[secondaryScale!.id]) < threshold
+  )
+
+  const combined = close && test.calculation.useCombinedResults && secondaryScale
     ? test.combinedResults.find((result) => samePair(result.scaleIds, [primaryScale.id, secondaryScale.id]))
     : undefined
+
   const chosenResultId = combined?.id ?? primary.id
-  const primaryPercent = percentages[primaryScale.id].toFixed(1)
-  const secondaryPercent = secondaryScale ? percentages[secondaryScale.id].toFixed(1) : null
+  const primaryPercent = percentages[primaryScale.id]
+  const secondaryPercent = secondaryScale ? percentages[secondaryScale.id] : null
+
   const explanation = combined
-    ? `Два ведущих результата близки: ${primary.name} — ${primaryPercent}%, ${secondary!.name} — ${secondaryPercent}%. Разница не превышает ${test.calculation.proximityThreshold} п.п., поэтому выбран комбинированный результат.`
-    : `Наибольший процент у результата «${primary.name}» — ${primaryPercent}%.${close ? ' Подходящего комбинированного текста нет, поэтому показан главный результат.' : ''}`
+    ? `Два ведущих результата близки: ${primary.name} — ${primaryPercent}%, ${secondary!.name} — ${secondaryPercent}%. Разница меньше ${test.calculation.proximityThreshold} п.п., поэтому выбран комбинированный результат.`
+    : `Наибольший итоговый результат — «${primary.name}» (${primaryPercent}%).${close ? ' Подходящего комбинированного текста нет, поэтому показан главный результат.' : ''}`
 
   return { scores, maximums, percentages, primary, secondary, combined, chosenResultId, explanation }
 }

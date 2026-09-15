@@ -46,6 +46,51 @@ describe('подробный scoring', () => {
     expect(result.combined?.id).toBe('result_s1_s2')
     expect(result.chosenResultId).toBe('result_s1_s2')
   })
+
+  it('округляет проценты и не считает ровно 8 п.п. близкими', () => {
+    const test = structuredClone(freshDemoFunnel().tests[0])
+    test.scales = test.scales.slice(0, 2)
+    test.results = test.results.filter((result) => test.scales.some((scale) => scale.id === result.scaleId))
+    test.questions = [{
+      id: 'q_exact_8',
+      text: 'Проверка',
+      type: 'single',
+      enabled: true,
+      required: true,
+      shuffleAnswers: false,
+      answers: [
+        { id: 'chosen', text: 'Выбранный', scores: { scale_s1: 100, scale_s2: 92 } },
+        { id: 'maximum', text: 'Максимум', scores: { scale_s1: 100, scale_s2: 100 } },
+      ],
+    }]
+    const result = calculateTestResult(test, { q_exact_8: 'chosen' })
+    expect(result.percentages).toMatchObject({ scale_s1: 100, scale_s2: 92 })
+    expect(result.combined).toBeUndefined()
+    expect(result.chosenResultId).toBe('result_s1')
+  })
+
+  it('при трёх шкалах в коридоре выбирает топ-2 по сырым баллам', () => {
+    const test = structuredClone(freshDemoFunnel().tests[0])
+    test.scales = test.scales.slice(0, 3)
+    test.results = test.results.filter((result) => test.scales.some((scale) => scale.id === result.scaleId))
+    test.questions = [{
+      id: 'q_three',
+      text: 'Проверка трёх шкал',
+      type: 'single',
+      enabled: true,
+      required: true,
+      shuffleAnswers: false,
+      answers: [
+        { id: 'chosen', text: 'Выбранный', scores: { scale_s1: 90, scale_s2: 80, scale_s3: 70 } },
+        { id: 'maximum', text: 'Максимум', scores: { scale_s1: 100, scale_s2: 88, scale_s3: 76 } },
+      ],
+    }]
+    const result = calculateTestResult(test, { q_three: 'chosen' })
+    expect(result.percentages).toMatchObject({ scale_s1: 90, scale_s2: 91, scale_s3: 92 })
+    expect(result.primary.id).toBe('result_s1')
+    expect(result.secondary?.id).toBe('result_s2')
+    expect(result.combined?.id).toBe('result_s1_s2')
+  })
 })
 
 describe('цикл файла', () => {
@@ -58,7 +103,18 @@ describe('цикл файла', () => {
     timerData.duration = 2
     const result = parseAndMigrateFunnelDocument(JSON.parse(JSON.stringify(source)))
     expect(result.success).toBe(true)
-    if (result.success) expect(result.document.nodes.find((node) => node.id === timer.id)?.data).toMatchObject({ unit: 'seconds', duration: 2 })
+    if (result.success) expect(result.document.nodes.find((node) => node.id === timer.id)?.data).toMatchObject({ unit: 'seconds', duration: 2, background: false })
+  })
+
+  it('фоновый таймер имеет два независимых выхода', () => {
+    const document = freshDemoFunnel()
+    const timer = document.nodes.find((node) => node.type === 'timer')
+    if (!timer) throw new Error('Timer fixture missing')
+    ;(timer.data as { background?: boolean }).background = true
+    expect(nodeHandles(timer, document)).toEqual([
+      { id: 'immediate', label: 'Сразу' },
+      { id: 'delayed', label: 'После таймера' },
+    ])
   })
 
   it('экспорт и повторный импорт не теряют ветки, scoring и статистику', () => {

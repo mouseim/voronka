@@ -249,6 +249,111 @@ describe('E2E runtime с фальшивым Telegram transport', () => {
     expect([...store.sessions.values()][0]?.status).toBe('completed')
   })
 
+  it('фоновый таймер продолжает основную ветку сразу и запускает отдельную ветку позже', async () => {
+    const document = await loadDemo()
+    document.bot.quietHours.enabled = false
+    const start = document.nodes.find((node) => node.type === 'start')!
+    document.nodes = [
+      start,
+      {
+        id: 'background-timer',
+        type: 'timer',
+        data: {
+          title: 'Касание через 7 дней',
+          duration: 7,
+          unit: 'days',
+          respectQuietHours: true,
+          background: true,
+        },
+      },
+      { id: 'main-end', type: 'end', data: { title: 'Основной финал', text: 'Основная ветка завершена' } },
+      { id: 'delayed-end', type: 'end', data: { title: 'День 7', text: 'Касание через 7 дней' } },
+    ]
+    document.edges = [
+      { id: 'start-timer', source: start.id, target: 'background-timer', sourceHandle: 'next' },
+      { id: 'timer-now', source: 'background-timer', target: 'main-end', sourceHandle: 'immediate' },
+      { id: 'timer-later', source: 'background-timer', target: 'delayed-end', sourceHandle: 'delayed' },
+    ]
+    document.assets = []
+    document.products = []
+    document.tests = []
+
+    const store = new MemoryRuntimeStore()
+    store.install(document)
+    const transport = new FakeTransport()
+    const engine = new FunnelEngine(store, transport)
+
+    await engine.start({ ...profile, externalUserId: 'background-user' })
+
+    expect(transport.texts.some((message) => message.text === 'Основная ветка завершена')).toBe(true)
+    expect([...store.sessions.values()]).toHaveLength(1)
+    expect([...store.sessions.values()][0]?.status).toBe('completed')
+
+    const job = [...store.jobs.values()].find((item) => item.type === 'background_timer')
+    expect(job).toBeDefined()
+
+    await engine.handleJob(job!)
+
+    expect(transport.texts.some((message) => message.text === 'Касание через 7 дней')).toBe(true)
+    const background = [...store.sessions.values()].find((session) => session.state.backgroundJobKey === job!.uniqueKey)
+    expect(background?.status).toBe('completed')
+    expect([...store.sessions.values()]).toHaveLength(2)
+
+    const countBeforeRetry = transport.texts.filter((message) => message.text === 'Касание через 7 дней').length
+    await engine.handleJob(job!)
+    const countAfterRetry = transport.texts.filter((message) => message.text === 'Касание через 7 дней').length
+    expect(countAfterRetry).toBe(countBeforeRetry)
+  })
+
+  it('напоминания используют редактируемый текст и timezone пользователя', async () => {
+    const document = await loadDemo()
+    const start = document.nodes.find((node) => node.type === 'start')!
+    document.bot.timezone = 'Europe/Moscow'
+    document.bot.quietHours = { enabled: true, from: '23:00', to: '09:00', behavior: 'postpone' }
+    document.bot.reminders.maxCount = 1
+    document.bot.reminders.stageText = 'МОЁ НАПОМИНАНИЕ'
+    document.nodes = [
+      start,
+      {
+        id: 'waiting-message',
+        type: 'message',
+        data: { title: 'Ожидание', text: 'Нажмите продолжить', buttons: [] },
+      },
+    ]
+    document.edges = [
+      { id: 'start-message', source: start.id, target: 'waiting-message', sourceHandle: 'next' },
+    ]
+    document.assets = []
+    document.products = []
+    document.tests = []
+
+    const store = new MemoryRuntimeStore()
+    store.install(document)
+    const transport = new FakeTransport()
+    const engine = new FunnelEngine(store, transport, {
+      now: () => new Date('2026-01-01T20:30:00.000Z'),
+    })
+
+    const timezoneProfile = {
+      ...profile,
+      externalUserId: 'timezone-user',
+      timezone: 'Europe/Amsterdam',
+    }
+
+    await engine.start(timezoneProfile)
+
+    const reminder = [...store.jobs.values()].find((job) => job.type === 'reminder')
+    expect(reminder).toBeDefined()
+    // 20:30 UTC = 21:30 Amsterdam: вне тихих часов.
+    // В Москве в этот момент 23:30 и без user timezone задача была бы перенесена.
+    expect(reminder?.dueAt).toBe('2026-01-02T20:30:00.000Z')
+    expect(reminder?.payload.text).toBe('МОЁ НАПОМИНАНИЕ')
+
+    await engine.handleJob(reminder!)
+    expect(transport.texts.at(-1)?.text).toBe('МОЁ НАПОМИНАНИЕ')
+    expect((await store.getUserByPlatformIdentity('telegram', 'timezone-user'))?.timezone).toBe('Europe/Amsterdam')
+  })
+
   it('/stop отменяет активные сессии и фоновые задачи', async () => {
     const store = new MemoryRuntimeStore()
     const document = await loadDemo()

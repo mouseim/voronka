@@ -69,7 +69,7 @@ export function PropertiesPanel({ document, onCloseMobile }: PropertiesPanelProp
         </Field>
         {node.type === 'message' && <MessageFields document={document} nodeId={node.id} data={node.data as MessageData} />}
         {node.type === 'media' && <MediaFields document={document} data={node.data as MediaData} patch={patch} />}
-        {node.type === 'timer' && <TimerFields data={node.data as TimerData} patch={patch} />}
+        {node.type === 'timer' && <TimerFields document={document} nodeId={node.id} data={node.data as TimerData} patch={patch} />}
         {node.type === 'variable' && <VariableFields document={document} data={node.data as VariableData} patch={patch} />}
         {node.type === 'condition' && <ConditionFields document={document} data={node.data as ConditionData} patch={patch} />}
         {node.type === 'test' && <TestFields document={document} data={node.data as TestBlockData} patch={patch} />}
@@ -182,10 +182,50 @@ function MediaFields({ document, data, patch }: { document: FunnelDocument; data
   </>
 }
 
-function TimerFields({ data, patch }: { data: TimerData; patch: Patch }) {
+function TimerFields({ document, nodeId, data, patch }: { document: FunnelDocument; nodeId: string; data: TimerData; patch: Patch }) {
+  const updateDocument = useEditorStore((state) => state.updateDocument)
+
+  const setBackground = (background: boolean) => {
+    const delayedConnected = document.edges.some((edge) =>
+      edge.source === nodeId && edge.sourceHandle === 'delayed'
+    )
+    if (!background && delayedConnected && !window.confirm(
+      'У фонового таймера подключена отложенная ветка. Выключить фоновый режим и удалить стрелку «После таймера»?',
+    )) return
+
+    updateDocument((draft) => {
+      const timer = draft.nodes.find((node) => node.id === nodeId)
+      if (timer?.type === 'timer') (timer.data as TimerData).background = background
+
+      if (background) {
+        draft.edges.forEach((edge) => {
+          if (edge.source !== nodeId) return
+          if ((edge.sourceHandle ?? 'next') === 'next') {
+            edge.sourceHandle = 'immediate'
+            edge.label = 'Сразу'
+          }
+        })
+      } else {
+        draft.edges = draft.edges.filter((edge) =>
+          !(edge.source === nodeId && edge.sourceHandle === 'delayed')
+        )
+        draft.edges.forEach((edge) => {
+          if (edge.source === nodeId && edge.sourceHandle === 'immediate') {
+            edge.sourceHandle = 'next'
+            edge.label = 'После паузы'
+          }
+        })
+      }
+    })
+  }
+
   return <>
     <div className="field-pair"><Field label="Через сколько"><input type="number" min="1" value={data.duration} onChange={(event) => patch({ duration: Math.max(1, Number(event.target.value)) })} /></Field><Field label="Единица"><select value={data.unit} onChange={(event) => patch({ unit: event.target.value })}><option value="seconds">Секунды</option><option value="minutes">Минуты</option><option value="hours">Часы</option><option value="days">Дни</option></select></Field></div>
     <Toggle checked={data.respectQuietHours} onChange={(respectQuietHours) => patch({ respectQuietHours })} label="Учитывать тихие часы" />
+    <Toggle checked={Boolean(data.background)} onChange={setBackground} label="Фоновый таймер" />
+    {data.background && <p className="panel-help">
+      Основная ветка сразу уйдёт через выход «Сразу». Вторая ветка запустится отдельно через заданное время через выход «После таймера».
+    </p>}
   </>
 }
 

@@ -30,16 +30,17 @@ export class PostgresRuntimeStore implements RuntimeStore {
 
   async upsertUser(profile: PlatformProfile) {
     const result = await this.pool.query<UserRow>(`
-      INSERT INTO telegram_users(platform, external_user_id, telegram_id, username, first_name, last_name, language_code)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      INSERT INTO telegram_users(platform, external_user_id, telegram_id, username, first_name, last_name, language_code, timezone)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       ON CONFLICT (platform, external_user_id) DO UPDATE SET
         username = EXCLUDED.username,
         first_name = EXCLUDED.first_name,
         last_name = EXCLUDED.last_name,
         language_code = EXCLUDED.language_code,
+        timezone = COALESCE(EXCLUDED.timezone, telegram_users.timezone),
         last_seen_at = now()
       RETURNING *
-    `, [profile.platform, profile.externalUserId, profile.platform === 'telegram' ? profile.externalUserId : null, profile.username ?? null, profile.firstName ?? null, profile.lastName ?? null, profile.languageCode ?? null])
+    `, [profile.platform, profile.externalUserId, profile.platform === 'telegram' ? profile.externalUserId : null, profile.username ?? null, profile.firstName ?? null, profile.lastName ?? null, profile.languageCode ?? null, profile.timezone ?? null])
     return mapUser(result.rows[0]!)
   }
 
@@ -64,12 +65,15 @@ export class PostgresRuntimeStore implements RuntimeStore {
   }
 
   async stopUserSessions(userId: string) {
-    const result = await this.pool.query<{ id: string }>(`
+    await this.pool.query(`
       UPDATE sessions
       SET status = 'stopped', stopped_at = now(), last_activity_at = now(), revision = revision + 1
       WHERE user_id = $1 AND status IN ('active', 'waiting')
-      RETURNING id
     `, [userId])
+    const result = await this.pool.query<{ id: string }>(
+      'SELECT id FROM sessions WHERE user_id = $1',
+      [userId],
+    )
     return result.rows.map((row) => row.id)
   }
 
@@ -150,6 +154,16 @@ export class PostgresRuntimeStore implements RuntimeStore {
 
   async getSession(sessionId: string) {
     const result = await this.pool.query<SessionRow>('SELECT * FROM sessions WHERE id = $1', [sessionId])
+    return result.rows[0] ? mapSession(result.rows[0]) : null
+  }
+
+  async findBackgroundSession(jobKey: string) {
+    const result = await this.pool.query<SessionRow>(`
+      SELECT * FROM sessions
+      WHERE state->>'backgroundJobKey' = $1
+      ORDER BY started_at DESC
+      LIMIT 1
+    `, [jobKey])
     return result.rows[0] ? mapSession(result.rows[0]) : null
   }
 
@@ -499,6 +513,7 @@ interface UserRow extends QueryResultRow {
   telegram_id: string | null
   username: string | null
   first_name: string | null
+  timezone: string | null
   opted_out_at: Date | string | null
   background_blocked: boolean
 }
@@ -609,6 +624,7 @@ function mapUser(row: UserRow): RuntimeUser {
     externalUserId: row.external_user_id,
     username: row.username ?? undefined,
     firstName: row.first_name ?? undefined,
+    timezone: row.timezone ?? undefined,
     optedOutAt: row.opted_out_at ? new Date(row.opted_out_at).toISOString() : null,
     backgroundBlocked: row.background_blocked,
   }

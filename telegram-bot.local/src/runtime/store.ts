@@ -28,6 +28,7 @@ export interface RuntimeStore {
   findAnyActiveSession(userId: string): Promise<RuntimeSession | null>
   findLatestSession(userId: string, funnelId: string): Promise<RuntimeSession | null>
   getSession(sessionId: string): Promise<RuntimeSession | null>
+  findBackgroundSession(jobKey: string): Promise<RuntimeSession | null>
   createSession(input: Omit<RuntimeSession, 'id' | 'revision' | 'startedAt' | 'lastActivityAt'>): Promise<RuntimeSession>
   saveSession(session: RuntimeSession, expectedRevision: number): Promise<RuntimeSession>
   abandonSession(sessionId: string): Promise<void>

@@ -232,6 +232,8 @@ export class FunnelEngine {
       if (active) {
         await this.store.abandonSession(active.id)
         await this.store.cancelSessionJobs(active.id)
+      } else if (origin) {
+        await this.store.cancelSessionJobs(origin.id, ['background_timer'])
       }
       const version = await this.store.resolveVersionByFunnel(callback.action.funnelId)
       if (!version) {
@@ -467,10 +469,54 @@ export class FunnelEngine {
     }
     const sessionId = String(job.payload.sessionId ?? '')
     let session = await this.store.getSession(sessionId)
-    if (!session || !['active', 'waiting'].includes(session.status)) return
+    if (!session) return
     const user = await this.store.getUser(session.userId)
-    if (!user || user.backgroundBlocked) return
+    if (!user) return
     const version = await this.requireVersion(session.versionId)
+
+    if (job.type === 'background_timer') {
+      if (user.backgroundBlocked) {
+        await this.event(session, 'background_timer_skipped', { reason: 'opted_out' }, `background_skip:${job.uniqueKey}`)
+        return
+      }
+
+      const targetNodeId = String(job.payload.targetNodeId ?? '')
+      if (!targetNodeId) return
+
+      let background = await this.store.findBackgroundSession(job.uniqueKey)
+      if (!background) {
+        const state = structuredClone(session.state)
+        state.awaiting = undefined
+        state.testRun = undefined
+        state.pendingTestResult = undefined
+        state.formRun = undefined
+        state.pendingFormSubmission = undefined
+        state.lastNodeEntered = undefined
+        state.backgroundJobKey = job.uniqueKey
+
+        background = await this.store.createSession({
+          userId: session.userId,
+          funnelId: session.funnelId,
+          versionId: session.versionId,
+          status: 'active',
+          currentNodeId: targetNodeId,
+          sourceTrackingId: session.sourceTrackingId,
+          sourceCode: session.sourceCode,
+          state,
+        })
+        await this.event(session, 'background_timer_fired', { targetNodeId }, `background_fire:${job.uniqueKey}`)
+      }
+
+      if (background.status === 'completed') return
+      if (!['active', 'waiting'].includes(background.status)) return
+      if (background.status === 'waiting') return
+      await this.run(user, background)
+      return
+    }
+
+    if (!['active', 'waiting'].includes(session.status)) return
+    if (user.backgroundBlocked) return
+
     if (job.type === 'resume_session') {
       const expectedNode = String(job.payload.nodeId ?? '')
       if (session.currentNodeId === expectedNode && session.status === 'active') await this.run(user, session)
@@ -503,6 +549,7 @@ export class FunnelEngine {
           new Date(this.now().getTime() + 2 * 3_600_000),
           version.document,
           version.document.bot.reminders.respectQuietHours,
+          user.timezone,
         )
         if (nextDue.date) {
           await this.store.scheduleJob({
@@ -558,7 +605,12 @@ export class FunnelEngine {
         return
       }
       if (node.type === 'timer') {
-        await this.scheduleTimer(session, document, node)
+        const data = node.data as TimerData
+        await this.scheduleTimer(user, session, document, node)
+        if (data.background) {
+          session = await this.advanceAndSave(session, document, node.id, 'immediate')
+          continue
+        }
         session.status = 'waiting'
         session.state.awaiting = 'timer'
         await this.save(session)
@@ -574,7 +626,7 @@ export class FunnelEngine {
       }
       if (node.type === 'consent') {
         await this.sendConsent(user, session, document, node)
-        await this.scheduleReminder(session, document, 'stage')
+        await this.scheduleReminder(user, session, document, 'stage')
         session.status = 'waiting'
         session.state.awaiting = 'callback'
         await this.save(session)
@@ -645,7 +697,7 @@ export class FunnelEngine {
     await this.recordAbButtonImpressions(session, experiments)
     session.status = 'waiting'
     session.state.awaiting = 'callback'
-    await this.scheduleReminder(session, version.document, 'stage')
+    await this.scheduleReminder(user, session, version.document, 'stage')
     await this.save(session)
   }
 
@@ -702,29 +754,46 @@ export class FunnelEngine {
     return 'required_placeholder' as const
   }
 
-  private async scheduleTimer(session: RuntimeSession, document: FunnelDocument, node: FunnelNode) {
+  private async scheduleTimer(user: RuntimeUser, session: RuntimeSession, document: FunnelDocument, node: FunnelNode) {
     const data = node.data as TimerData
+    const background = Boolean(data.background)
+    const handle = background ? 'delayed' : 'next'
+    const jobType: DurableJob['type'] = background ? 'background_timer' : 'timer_continue'
+    const prefix = background ? 'background-timer' : 'timer'
     const rawDue = new Date(this.now().getTime() + timerDelayMs(data))
-    const adjusted = applyQuietHours(rawDue, document, data.respectQuietHours)
+    const adjusted = applyQuietHours(rawDue, document, data.respectQuietHours, user.timezone)
+
     if (!adjusted.date) {
-      await this.event(session, 'reminder_skipped', { reason: 'quiet_hours', nodeId: node.id }, `timer_skip:${node.id}:${session.revision}`)
-      await this.store.scheduleJob({
-        uniqueKey: `timer:${session.id}:${node.id}:${session.revision}`,
-        type: 'timer_continue',
-        payload: { sessionId: session.id, nodeId: node.id, targetNodeId: outgoingNodeId(document, node.id, 'next') },
-        dueAt: rawDue.toISOString(),
-        maxAttempts: 5,
-      })
-      return
+      await this.event(session, background ? 'background_timer_skipped' : 'reminder_skipped', {
+        reason: 'quiet_hours',
+        nodeId: node.id,
+      }, `${prefix}_skip:${node.id}:${session.revision}`)
+
+      // У обычного таймера нельзя навсегда оставить основную сессию на паузе.
+      // У фонового таймера режим "skip" действительно отменяет только фоновую ветку.
+      if (background) return
     }
+
+    const dueAt = adjusted.date ?? rawDue
+    const uniqueKey = `${prefix}:${session.id}:${node.id}:${session.revision}`
+
     await this.store.scheduleJob({
-      uniqueKey: `timer:${session.id}:${node.id}:${session.revision}`,
-      type: 'timer_continue',
-      payload: { sessionId: session.id, nodeId: node.id, targetNodeId: outgoingNodeId(document, node.id, 'next') },
-      dueAt: adjusted.date.toISOString(),
+      uniqueKey,
+      type: jobType,
+      payload: {
+        sessionId: session.id,
+        nodeId: node.id,
+        targetNodeId: outgoingNodeId(document, node.id, handle),
+      },
+      dueAt: dueAt.toISOString(),
       maxAttempts: 5,
     })
-    await this.event(session, 'reminder_scheduled', { kind: 'timer', dueAt: adjusted.date.toISOString(), disposition: adjusted.disposition }, `timer:${node.id}:${session.revision}`)
+
+    await this.event(session, background ? 'background_timer_scheduled' : 'reminder_scheduled', {
+      kind: background ? 'background_timer' : 'timer',
+      dueAt: dueAt.toISOString(),
+      disposition: adjusted.date ? adjusted.disposition : 'skipped',
+    }, `${prefix}:${node.id}:${session.revision}`)
   }
 
   private async beginOrContinueTest(user: RuntimeUser, session: RuntimeSession, version: FunnelVersionRecord, node: FunnelNode) {
@@ -865,7 +934,7 @@ export class FunnelEngine {
     }
     session.state.pendingTestResult = undefined
     session = await this.save(session)
-    await this.scheduleReminder(session, version.document, 'test')
+    await this.scheduleReminder(user, session, version.document, 'test')
   }
 
   private async askTestQuestion(user: RuntimeUser, session: RuntimeSession, version: FunnelVersionRecord) {
@@ -921,7 +990,7 @@ export class FunnelEngine {
     await this.event(session, 'question_viewed', { testId: test.id, questionId: question.id }, `question_view:${question.id}:${run.index}`)
     session.state.awaiting = ['number', 'text'].includes(question.type) ? 'text' : 'callback'
     session.status = 'waiting'
-    await this.scheduleReminder(session, version.document, 'test')
+    await this.scheduleReminder(user, session, version.document, 'test')
     await this.save(session)
   }
 
@@ -1018,7 +1087,7 @@ export class FunnelEngine {
     await this.transport.sendText(user.externalUserId, `${this.render(version.document, session, field.label)}${field.required ? ' *' : ''}`, [[{ text: 'Отменить', callbackToken: cancel }]])
     session.status = 'waiting'
     session.state.awaiting = 'text'
-    await this.scheduleReminder(session, version.document, 'stage')
+    await this.scheduleReminder(user, session, version.document, 'stage')
     await this.save(session)
   }
 
@@ -1352,15 +1421,23 @@ export class FunnelEngine {
     return test?.questions.find((question) => question.id === run.questionOrder[run.index])
   }
 
-  private async scheduleReminder(session: RuntimeSession, document: FunnelDocument, kind: 'test' | 'stage') {
+  private async scheduleReminder(user: RuntimeUser, session: RuntimeSession, document: FunnelDocument, kind: 'test' | 'stage') {
     const maximum = Math.min(kind === 'test' ? 2 : 1, document.bot.reminders.maxCount)
     if (maximum <= 0) return
     const delay = kind === 'test' ? 2 * 3_600_000 : 24 * 3_600_000
-    const adjusted = applyQuietHours(new Date(this.now().getTime() + delay), document, document.bot.reminders.respectQuietHours)
+    const adjusted = applyQuietHours(
+      new Date(this.now().getTime() + delay),
+      document,
+      document.bot.reminders.respectQuietHours,
+      user.timezone,
+    )
     if (!adjusted.date) {
       await this.event(session, 'reminder_skipped', { reason: 'quiet_hours', kind }, `reminder_skip:${session.currentNodeId}:${session.revision}`)
       return
     }
+    const text = kind === 'test'
+      ? document.bot.reminders.testText || 'Продолжим тест? Ваши ответы сохранены.'
+      : document.bot.reminders.stageText || 'Продолжим? Вы остановились на важном этапе.'
     await this.store.scheduleJob({
       uniqueKey: `reminder:${session.id}:${session.currentNodeId}:${session.revision}:1`,
       type: 'reminder',
@@ -1369,7 +1446,7 @@ export class FunnelEngine {
         nodeId: session.currentNodeId,
         count: 1,
         maximum,
-        text: kind === 'test' ? 'Продолжим тест? Ваши ответы сохранены.' : 'Продолжим? Вы остановились на важном этапе.',
+        text,
       },
       dueAt: adjusted.date.toISOString(),
       maxAttempts: 5,
