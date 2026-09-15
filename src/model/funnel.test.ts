@@ -115,22 +115,36 @@ describe('формат, ссылки и версии', () => {
   })
 
   it('считает старую tracking link без platform ссылкой Telegram', () => {
-    const source = freshDemoFunnel()
+    const source = createEmptyFunnel()
+    source.bot.trackingLinks.push({
+      id: 'legacy_link',
+      name: 'Legacy',
+      code: 'legacy_code',
+      source: 'legacy',
+      campaign: 'legacy',
+      active: true,
+    })
     const parsed = parseAndMigrateFunnelDocument(JSON.parse(JSON.stringify(source)))
     expect(parsed.success).toBe(true)
     if (parsed.success) {
-      expect(parsed.document.bot.trackingLinks.every((link) => link.platform === 'telegram')).toBe(true)
-      expect(parsed.document.bot.trackingLinks.every((link) => link.locked === true)).toBe(true)
+      expect(parsed.document.bot.trackingLinks).toHaveLength(1)
+      expect(parsed.document.bot.trackingLinks[0]?.platform).toBe('telegram')
+      expect(parsed.document.bot.trackingLinks[0]?.locked).toBe(true)
     }
   })
 
   it('новая версия сбрасывает только статистику', () => {
     const source = freshDemoFunnel()
+    source.analytics.snapshotAt = '2026-01-01T00:00:00.000Z'
+    source.analytics.summary.started = 42
+    source.analytics.nodes.fixture = { entered: 42, completed: 10 }
+
     const next = createNewVersion(source)
-    expect(next.funnel.version).toBe(2)
+
+    expect(next.funnel.version).toBe(source.funnel.version + 1)
     expect(next.analytics.snapshotAt).toBeNull()
     expect(next.analytics.summary.started).toBe(0)
     expect(next.nodes).toEqual(source.nodes)
-    expect(source.analytics.summary.started).toBeGreaterThan(0)
+    expect(source.analytics.summary.started).toBe(42)
   })
 })

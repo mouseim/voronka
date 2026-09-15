@@ -20,13 +20,20 @@ describe('platform-specific media в .funnel 3.0', () => {
   })
 
   it('использует общий ref без обязательного дублирования для VK', () => {
-    const asset = freshDemoFunnel().assets[0]!
+    const document = freshDemoFunnel()
+    const asset = {
+      ...document.assets[0]!,
+      type: 'image' as const,
+      logicalRef: 'telegram:file/demo-image',
+      platformRefs: undefined,
+    }
+    document.assets[0] = asset
 
     expect(mediaPlatformReadiness(asset)).toEqual({
       telegram: { state: 'ready', label: 'используется общий источник' },
       vk: { state: 'warning', label: 'нужна привязка через Telegram /admin' },
     })
-    expect(validateFunnel(freshDemoFunnel()).filter((issue) => issue.code.startsWith('vk_'))).toEqual([])
+    expect(validateFunnel(document).filter((issue) => issue.code.startsWith('vk_'))).toEqual([])
   })
 
   it('сохраняет Telegram video ref и отдельный VK video ref через export/import', () => {

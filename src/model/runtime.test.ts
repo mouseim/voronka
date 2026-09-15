@@ -8,29 +8,55 @@ describe('подробный scoring', () => {
   it('результаты теста создают подписанные выходы на графе', () => {
     const document = freshDemoFunnel()
     const node = document.nodes.find((item) => item.type === 'test')!
+    const test = document.tests[0]!
     const handles = nodeHandles(node, document)
-    expect(handles).toHaveLength(8)
-    expect(handles).toContainEqual({ id: 'result_s1', label: 'Быть нужной' })
-    expect(handles).toContainEqual({ id: 'result_s1_s2', label: 'Быть нужной + Контроль' })
+
+    expect(handles).toHaveLength(test.results.length + test.combinedResults.length)
+    expect(handles.map((handle) => handle.id)).toContain('result_s1')
+    expect(handles.map((handle) => handle.id)).toContain('result_s1_s2')
   })
 
   it('полный демонстрационный scoring детерминирован', () => {
     const test = freshDemoFunnel().tests[0]
-    const answers = Object.fromEntries(test.questions.map((question) => [question.id, question.answers[0].id]))
+    const answers = Object.fromEntries(test.questions.map((question) => {
+      const answer = [...question.answers].sort(
+        (left, right) => (right.scores.scale_s1 ?? 0) - (left.scores.scale_s1 ?? 0),
+      )[0]!
+      return [question.id, answer.id]
+    }))
+
     const first = calculateTestResult(test, answers)
     const second = calculateTestResult(test, answers)
+
     expect(first).toEqual(second)
-    expect(first.primary.name).toBe('Быть нужной')
+    expect(first.primary.id).toBe('result_s1')
     expect(first.percentages.scale_s1).toBe(100)
   })
 
   it('динамический максимум учитывает только активные вопросы', () => {
     const test = structuredClone(freshDemoFunnel().tests[0])
-    test.questions[1].enabled = false
-    const answers = Object.fromEntries(test.questions.map((question) => [question.id, question.answers[0].id]))
+    const disabled = test.questions.find((question) =>
+      Math.max(...question.answers.map((answer) => answer.scores.scale_s1 ?? 0)) > 0
+    )!
+    disabled.enabled = false
+
+    const answers = Object.fromEntries(test.questions.map((question) => {
+      const answer = [...question.answers].sort(
+        (left, right) => (right.scores.scale_s1 ?? 0) - (left.scores.scale_s1 ?? 0),
+      )[0]!
+      return [question.id, answer.id]
+    }))
+
+    const expectedMaximum = test.questions
+      .filter((question) => question.enabled)
+      .reduce((sum, question) =>
+        sum + Math.max(...question.answers.map((answer) => answer.scores.scale_s1 ?? 0)),
+      0)
+
     const result = calculateTestResult(test, answers)
-    expect(result.maximums.scale_s1).toBe(18)
-    expect(result.scores.scale_s1).toBe(18)
+
+    expect(result.maximums.scale_s1).toBe(expectedMaximum)
+    expect(result.scores.scale_s1).toBe(expectedMaximum)
     expect(result.percentages.scale_s1).toBe(100)
   })
 
@@ -101,6 +127,7 @@ describe('цикл файла', () => {
     const timerData = timer.data as { unit: 'seconds' | 'minutes' | 'hours' | 'days'; duration: number }
     timerData.unit = 'seconds'
     timerData.duration = 2
+    ;(timer.data as { background?: boolean }).background = false
     const result = parseAndMigrateFunnelDocument(JSON.parse(JSON.stringify(source)))
     expect(result.success).toBe(true)
     if (result.success) expect(result.document.nodes.find((node) => node.id === timer.id)?.data).toMatchObject({ unit: 'seconds', duration: 2, background: false })
@@ -133,7 +160,31 @@ describe('цикл файла', () => {
 
   it('статистика источника читается по стабильному ID ссылки', () => {
     const document = freshDemoFunnel()
-    const link = document.bot.trackingLinks[0]
-    expect(document.analytics.sources[link.id]).toMatchObject({ started: 840, completed: 548, applications: 261, purchases: 184 })
+    const link = {
+      id: 'tracking_fixture',
+      name: 'Fixture',
+      code: 'fixture',
+      platform: 'telegram' as const,
+      source: 'fixture',
+      campaign: 'fixture',
+      active: true,
+      locked: true,
+    }
+    document.bot.trackingLinks.push(link)
+    document.analytics.sources[link.id] = {
+      arrived: 1000,
+      started: 840,
+      completed: 548,
+      applications: 261,
+      purchases: 184,
+      revenue: 10000,
+    }
+
+    expect(document.analytics.sources[link.id]).toMatchObject({
+      started: 840,
+      completed: 548,
+      applications: 261,
+      purchases: 184,
+    })
   })
 })

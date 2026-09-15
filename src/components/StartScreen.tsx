@@ -63,7 +63,7 @@ export function StartScreen(props: StartScreenProps) {
         <section className="primary-actions">
           <button className="action-card create" onClick={props.onCreate}><span className="action-icon"><Plus size={25} /></span><span><strong>Создать новую воронку</strong><small>Начать с чистого полотна</small></span><i>→</i></button>
           <button className="action-card open" onClick={() => setConnectionOpen(true)}><span className="action-icon"><Cloud size={25} /></span><span><strong>Подключить мои воронки</strong><small>Загрузить опубликованные проекты</small></span><i>→</i></button>
-          <button className="action-card demo" onClick={props.onDemo}><span className="action-icon"><Sparkles size={25} /></span><span><strong>Открыть полное демо</strong><small>7 механизмов, тест, продукт и статистика</small></span><i>→</i></button>
+          <button className="action-card demo" onClick={props.onDemo}><span className="action-icon"><Sparkles size={25} /></span><span><strong>Открыть полное демо</strong><small>24 вопроса, подарок, трипваер и касания</small></span><i>→</i></button>
           <input ref={inputRef} type="file" accept=".funnel,application/json" hidden onChange={(event) => processFile(event.target.files?.[0])} />
         </section>
 
