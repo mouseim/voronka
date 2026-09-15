@@ -96,19 +96,47 @@ export function abButtonSnapshot(
   events: Array<{ event_type: string; payload: Record<string, unknown>; count: string }>,
 ) {
   const result: NonNullable<FunnelDocument['analytics']['abButtons']> = {}
-  for (const test of document.tests) {
+
+  const add = (buttonId: string, contextId: string, contextLabel: string, textA: string, textB?: string) => {
+    if (!textB?.trim()) return
+    result[buttonId] = {
+      buttonId,
+      resultId: contextId,
+      contextLabel,
+      A: { text: textA, shown: 0, clicked: 0 },
+      B: { text: textB, shown: 0, clicked: 0 },
+    }
+  }
+
+  for (const node of document.nodes ?? []) {
+    const title = String(node.data.title || 'Этап')
+    if (node.type === 'message') {
+      const data = node.data as { buttons: Array<{ id: string; text: string; abText?: string }> }
+      data.buttons.forEach((button) => add(button.id, node.id, title, button.text, button.abText))
+    }
+    if (node.type === 'consent') {
+      const data = node.data as { acceptText: string; acceptAbText?: string; declineText: string; declineAbText?: string; declineEnabled: boolean }
+      add(`${node.id}:accept`, node.id, `${title} · согласие`, data.acceptText, data.acceptAbText)
+      if (data.declineEnabled) add(`${node.id}:decline`, node.id, `${title} · отказ`, data.declineText, data.declineAbText)
+    }
+    if (node.type === 'product') {
+      const data = node.data as { payButtonText: string; payButtonAbText?: string }
+      add(`${node.id}:pay`, node.id, `${title} · оплата`, data.payButtonText, data.payButtonAbText)
+    }
+    if (node.type === 'external_link') {
+      const data = node.data as { buttonText: string; buttonAbText?: string }
+      add(`${node.id}:link`, node.id, `${title} · ссылка`, data.buttonText, data.buttonAbText)
+    }
+  }
+
+  for (const test of document.tests ?? []) {
     for (const testResult of [...test.results, ...test.combinedResults]) {
       for (const button of testResult.buttons) {
-        if (!button.abText?.trim()) continue
-        result[button.id] = {
-          buttonId: button.id,
-          resultId: testResult.id,
-          A: { text: button.text, shown: 0, clicked: 0 },
-          B: { text: button.abText, shown: 0, clicked: 0 },
-        }
+        add(button.id, testResult.id, `Результат · ${testResult.name}`, button.text, button.abText)
       }
     }
   }
+
   for (const event of events.filter((item) => item.event_type === 'ab_button_shown' || item.event_type === 'ab_button_clicked')) {
     const entry = result[String(event.payload.buttonId ?? '')]
     const variant = event.payload.variant === 'A' || event.payload.variant === 'B' ? event.payload.variant : null
@@ -116,6 +144,7 @@ export function abButtonSnapshot(
     const metric = event.event_type === 'ab_button_shown' ? 'shown' : 'clicked'
     entry[variant][metric] += Number(event.count)
   }
+
   return result
 }
 

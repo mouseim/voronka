@@ -49,6 +49,7 @@ export interface StartData extends BaseNodeData {}
 export interface MessageButton {
   id: string
   text: string
+  abText?: string
   action: 'branch' | 'url' | 'product'
   url?: string
   productId?: string
@@ -113,8 +114,10 @@ export interface ConsentData extends BaseNodeData {
   text: string
   policyUrl: string
   acceptText: string
+  acceptAbText?: string
   declineEnabled: boolean
   declineText: string
+  declineAbText?: string
 }
 
 export interface ProductBlockData extends BaseNodeData {
@@ -123,12 +126,14 @@ export interface ProductBlockData extends BaseNodeData {
   description: string
   price: number
   payButtonText: string
+  payButtonAbText?: string
   allowSkip: boolean
 }
 
 export interface ExternalLinkData extends BaseNodeData {
   text: string
   buttonText: string
+  buttonAbText?: string
   url: string
   continueAfterClick: boolean
 }
@@ -345,6 +350,7 @@ export interface FunnelAnalytics {
   abButtons?: Record<string, {
     buttonId: string
     resultId: string
+    contextLabel?: string
     A: { text: string; shown: number; clicked: number }
     B: { text: string; shown: number; clicked: number }
   }>

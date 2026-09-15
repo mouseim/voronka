@@ -46,9 +46,31 @@ const nodeSchema = z.discriminatedUnion('type', [
   })),
   node('test', base.extend({ testId: z.string().optional(), welcomeText: z.string() })),
   node('form', base.extend({ introText: z.string(), fields: z.array(formField), submitText: z.string(), confirmationText: z.string() })),
-  node('consent', base.extend({ text: z.string(), policyUrl: z.string(), acceptText: z.string(), declineEnabled: z.boolean(), declineText: z.string() })),
-  node('product', base.extend({ productId: z.string().optional(), headline: z.string(), description: z.string(), price: z.number().finite().nonnegative(), payButtonText: z.string(), allowSkip: z.boolean() })),
-  node('external_link', base.extend({ text: z.string(), buttonText: z.string(), url: z.string(), continueAfterClick: z.boolean() })),
+  node('consent', base.extend({
+    text: z.string(),
+    policyUrl: z.string(),
+    acceptText: z.string(),
+    acceptAbText: z.string().optional(),
+    declineEnabled: z.boolean(),
+    declineText: z.string(),
+    declineAbText: z.string().optional(),
+  })),
+  node('product', base.extend({
+    productId: z.string().optional(),
+    headline: z.string(),
+    description: z.string(),
+    price: z.number().finite().nonnegative(),
+    payButtonText: z.string(),
+    payButtonAbText: z.string().optional(),
+    allowSkip: z.boolean(),
+  })),
+  node('external_link', base.extend({
+    text: z.string(),
+    buttonText: z.string(),
+    buttonAbText: z.string().optional(),
+    url: z.string(),
+    continueAfterClick: z.boolean(),
+  })),
   node('end', base.extend({ text: z.string() })),
 ])
 
@@ -158,6 +180,7 @@ const analyticsSchema = z.object({
   abButtons: z.record(z.object({
     buttonId: z.string(),
     resultId: z.string(),
+    contextLabel: z.string().optional(),
     A: z.object({ text: z.string(), shown: z.number().nonnegative(), clicked: z.number().nonnegative() }),
     B: z.object({ text: z.string(), shown: z.number().nonnegative(), clicked: z.number().nonnegative() }),
   })).optional(),

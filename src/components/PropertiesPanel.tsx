@@ -138,7 +138,16 @@ function MessageFields({ document, nodeId, data }: { document: FunnelDocument; n
         {data.buttons.map((button, index) => (
           <div className="option-editor" key={button.id}>
             <div className="option-editor-title"><GripVertical size={15} /><strong>Кнопка {index + 1}</strong><div className="option-mini-actions"><button disabled={index === 0} onClick={() => move(index, -1)}>↑</button><button disabled={index === data.buttons.length - 1} onClick={() => move(index, 1)}>↓</button></div></div>
-            <Field label="Текст"><input value={button.text} onChange={(event) => rename(button, event.target.value)} /></Field>
+            <Field label={button.abText !== undefined ? 'Вариант A' : 'Текст'}>
+              <input value={button.text} onChange={(event) => rename(button, event.target.value)} />
+            </Field>
+            {button.abText !== undefined && <Field label="Вариант B">
+              <input
+                value={button.abText}
+                placeholder="Альтернативный текст"
+                onChange={(event) => update(data.buttons.map((item) => item.id === button.id ? { ...item, abText: event.target.value } : item))}
+              />
+            </Field>}
             <Field label="Действие">
               <select value={button.action} onChange={(event) => changeAction(button, event.target.value as MessageButton['action'])}>
                 <option value="branch">Продолжить по своей ветке</option>
@@ -149,6 +158,10 @@ function MessageFields({ document, nodeId, data }: { document: FunnelDocument; n
             {button.action === 'url' && <Field label="Ссылка"><input value={button.url ?? ''} placeholder="https://" onChange={(event) => update(data.buttons.map((item) => item.id === button.id ? { ...item, url: event.target.value } : item))} /></Field>}
             {button.action === 'product' && <Field label="Продукт"><select value={button.productId ?? ''} onChange={(event) => update(data.buttons.map((item) => item.id === button.id ? { ...item, productId: event.target.value || undefined } : item))}><option value="">Выберите продукт</option>{document.products.map((product) => <option value={product.id} key={product.id}>{product.name}</option>)}</select></Field>}
             <div className="option-row-actions">
+              <button onClick={() => update(data.buttons.map((item) => item.id === button.id
+                ? { ...item, abText: item.abText === undefined ? '' : undefined }
+                : item
+              ))}>{button.abText === undefined ? 'A/B' : 'Отключить A/B'}</button>
               <button onClick={() => update([...data.buttons.slice(0, index + 1), { ...button, id: newId('button'), text: `${button.text} — копия` }, ...data.buttons.slice(index + 1)])}><Copy size={14} /> Дублировать</button>
               <button className="danger" onClick={() => remove(button)}><Trash2 size={14} /> Удалить</button>
             </div>
@@ -272,9 +285,15 @@ function ConsentFields({ data, patch }: { data: ConsentData; patch: Patch }) {
   return <>
     <Field label="Текст согласия"><textarea rows={6} value={data.text} onChange={(event) => patch({ text: event.target.value })} /></Field>
     <Field label="Ссылка на политику"><input value={data.policyUrl} placeholder="https://" onChange={(event) => patch({ policyUrl: event.target.value })} /></Field>
-    <Field label="Кнопка согласия"><input value={data.acceptText} onChange={(event) => patch({ acceptText: event.target.value })} /></Field>
+    <Field label={data.acceptAbText !== undefined ? 'Кнопка согласия · A' : 'Кнопка согласия'}><input value={data.acceptText} onChange={(event) => patch({ acceptText: event.target.value })} /></Field>
+    {data.acceptAbText !== undefined && <Field label="Кнопка согласия · B"><input value={data.acceptAbText} placeholder="Альтернативный текст" onChange={(event) => patch({ acceptAbText: event.target.value })} /></Field>}
+    <button className="text-button" onClick={() => patch({ acceptAbText: data.acceptAbText === undefined ? '' : undefined })}>{data.acceptAbText === undefined ? 'A/B кнопки согласия' : 'Отключить A/B кнопки согласия'}</button>
     <Toggle checked={data.declineEnabled} onChange={(declineEnabled) => patch({ declineEnabled })} label="Показывать кнопку отказа" />
-    {data.declineEnabled && <Field label="Кнопка отказа"><input value={data.declineText} onChange={(event) => patch({ declineText: event.target.value })} /></Field>}
+    {data.declineEnabled && <>
+      <Field label={data.declineAbText !== undefined ? 'Кнопка отказа · A' : 'Кнопка отказа'}><input value={data.declineText} onChange={(event) => patch({ declineText: event.target.value })} /></Field>
+      {data.declineAbText !== undefined && <Field label="Кнопка отказа · B"><input value={data.declineAbText} placeholder="Альтернативный текст" onChange={(event) => patch({ declineAbText: event.target.value })} /></Field>}
+      <button className="text-button" onClick={() => patch({ declineAbText: data.declineAbText === undefined ? '' : undefined })}>{data.declineAbText === undefined ? 'A/B кнопки отказа' : 'Отключить A/B кнопки отказа'}</button>
+    </>}
   </>
 }
 
@@ -284,7 +303,9 @@ function ProductFields({ document, data, patch }: { document: FunnelDocument; da
     <Field label="Заголовок"><input value={data.headline} onChange={(event) => patch({ headline: event.target.value })} /></Field>
     <Field label="Описание"><textarea rows={4} value={data.description} onChange={(event) => patch({ description: event.target.value })} /></Field>
     <Field label="Цена, ₽"><input type="number" min="0" step="1" value={data.price} onChange={(event) => patch({ price: Math.max(0, Number(event.target.value)) })} /></Field>
-    <Field label="Кнопка оплаты"><input value={data.payButtonText} onChange={(event) => patch({ payButtonText: event.target.value })} /></Field>
+    <Field label={data.payButtonAbText !== undefined ? 'Кнопка оплаты · A' : 'Кнопка оплаты'}><input value={data.payButtonText} onChange={(event) => patch({ payButtonText: event.target.value })} /></Field>
+    {data.payButtonAbText !== undefined && <Field label="Кнопка оплаты · B"><input value={data.payButtonAbText} placeholder="Альтернативный текст" onChange={(event) => patch({ payButtonAbText: event.target.value })} /></Field>}
+    <button className="text-button" onClick={() => patch({ payButtonAbText: data.payButtonAbText === undefined ? '' : undefined })}>{data.payButtonAbText === undefined ? 'A/B кнопки оплаты' : 'Отключить A/B кнопки оплаты'}</button>
     <Toggle checked={data.allowSkip} onChange={(allowSkip) => patch({ allowSkip })} label="Можно продолжить без покупки" />
     <p className="panel-help">В предпросмотре исход оплаты моделируется. Реальная платёжная система не подключена.</p>
   </>
@@ -293,7 +314,9 @@ function ProductFields({ document, data, patch }: { document: FunnelDocument; da
 function ExternalLinkFields({ data, patch }: { data: ExternalLinkData; patch: Patch }) {
   return <>
     <Field label="Текст перед кнопкой"><textarea rows={4} value={data.text} onChange={(event) => patch({ text: event.target.value })} /></Field>
-    <Field label="Подпись кнопки"><input value={data.buttonText} onChange={(event) => patch({ buttonText: event.target.value })} /></Field>
+    <Field label={data.buttonAbText !== undefined ? 'Подпись кнопки · A' : 'Подпись кнопки'}><input value={data.buttonText} onChange={(event) => patch({ buttonText: event.target.value })} /></Field>
+    {data.buttonAbText !== undefined && <Field label="Подпись кнопки · B"><input value={data.buttonAbText} placeholder="Альтернативный текст" onChange={(event) => patch({ buttonAbText: event.target.value })} /></Field>}
+    <button className="text-button" onClick={() => patch({ buttonAbText: data.buttonAbText === undefined ? '' : undefined })}>{data.buttonAbText === undefined ? 'A/B текста кнопки' : 'Отключить A/B текста кнопки'}</button>
     <Field label="URL"><input value={data.url} placeholder="https://" onChange={(event) => patch({ url: event.target.value })} /></Field>
     <Toggle checked={data.continueAfterClick} onChange={(continueAfterClick) => patch({ continueAfterClick })} label="Продолжить воронку после клика" />
   </>

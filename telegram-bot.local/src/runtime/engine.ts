@@ -424,9 +424,17 @@ export class FunnelEngine {
     if (session) {
       await this.event(session, 'external_link_clicked', { targetHost: new URL(redirect.targetUrl).host }, `redirect:${token}`)
       const version = await this.requireVersion(session.versionId)
-      const matched = findAbResultButtonByUrl(version.document, redirect.targetUrl)
+      const matched = findAbButtonByUrl(version.document, redirect.targetUrl)
       if (matched) {
-        const assignment = resultButtonAssignment(session.userId, session.versionId, matched.button, matched.resultId, (text) => this.render(version.document, session, text))
+        const assignment = abTextAssignment(
+          session.userId,
+          session.versionId,
+          matched.buttonId,
+          matched.text,
+          matched.abText,
+          matched.contextId,
+          (text) => this.render(version.document, session, text),
+        )
         if (assignment) await this.event(session, 'ab_button_clicked', { ...assignment }, `ab_click:${token}`)
       }
       if (redirect.continueAfterClick) {
@@ -606,18 +614,35 @@ export class FunnelEngine {
   private async sendMessageNode(user: RuntimeUser, session: RuntimeSession, version: FunnelVersionRecord, node: FunnelNode) {
     const data = node.data as MessageData
     const rows: OutgoingButton[][] = []
+    const experiments: AbButtonAssignment[] = []
     const branches = branchButtons(data.buttons)
     for (const button of data.buttons) {
+      const assignment = abTextAssignment(
+        user.id,
+        session.versionId,
+        button.id,
+        button.text,
+        button.abText,
+        node.id,
+        (text) => this.render(version.document, session, text),
+      )
+      const text = assignment?.text ?? this.render(version.document, session, button.text)
+      let shown = false
       if (button.action === 'branch') {
-        rows.push([{ text: this.render(version.document, session, button.text), callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: node.id, handle: button.id }) }])
+        rows.push([{ text, callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: node.id, handle: button.id, ...(assignment ? { ab: assignment } : {}) }) }])
+        shown = true
       } else if (button.action === 'url' && button.url) {
-        rows.push([{ text: this.render(version.document, session, button.text), url: await this.safeActionUrl(user, session, button.url, false) }])
+        rows.push([{ text, url: await this.safeActionUrl(user, session, button.url, false) }])
+        shown = true
       } else if (button.action === 'product' && button.productId) {
-        rows.push([{ text: this.render(version.document, session, button.text), callbackToken: await this.store.createCallback(user.id, session.id, { type: 'product_buy', nodeId: node.id, productId: button.productId }) }])
+        rows.push([{ text, callbackToken: await this.store.createCallback(user.id, session.id, { type: 'product_buy', nodeId: node.id, productId: button.productId, ...(assignment ? { ab: assignment } : {}) }) }])
+        shown = true
       }
+      if (assignment && shown) experiments.push(assignment)
     }
     if (!branches.length) rows.push([{ text: 'Продолжить', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: node.id, handle: 'next' }) }])
     await this.sendText(user.externalUserId, this.render(version.document, session, data.text), rows)
+    await this.recordAbButtonImpressions(session, experiments)
     session.status = 'waiting'
     session.state.awaiting = 'callback'
     await this.scheduleReminder(session, version.document, 'stage')
@@ -1040,10 +1065,21 @@ export class FunnelEngine {
   private async sendConsent(user: RuntimeUser, session: RuntimeSession, document: FunnelDocument, node: FunnelNode) {
     const data = node.data as ConsentData
     const rows: OutgoingButton[][] = []
+    const experiments: AbButtonAssignment[] = []
     if (data.policyUrl) rows.push([{ text: 'Политика обработки данных', url: data.policyUrl }])
-    rows.push([{ text: this.render(document, session, data.acceptText), callbackToken: await this.store.createCallback(user.id, session.id, { type: 'consent', nodeId: node.id, accepted: true }) }])
-    if (data.declineEnabled) rows.push([{ text: this.render(document, session, data.declineText), callbackToken: await this.store.createCallback(user.id, session.id, { type: 'consent', nodeId: node.id, accepted: false }) }])
+
+    const accept = abTextAssignment(user.id, session.versionId, `${node.id}:accept`, data.acceptText, data.acceptAbText, node.id, (text) => this.render(document, session, text))
+    rows.push([{ text: accept?.text ?? this.render(document, session, data.acceptText), callbackToken: await this.store.createCallback(user.id, session.id, { type: 'consent', nodeId: node.id, accepted: true, ...(accept ? { ab: accept } : {}) }) }])
+    if (accept) experiments.push(accept)
+
+    if (data.declineEnabled) {
+      const decline = abTextAssignment(user.id, session.versionId, `${node.id}:decline`, data.declineText, data.declineAbText, node.id, (text) => this.render(document, session, text))
+      rows.push([{ text: decline?.text ?? this.render(document, session, data.declineText), callbackToken: await this.store.createCallback(user.id, session.id, { type: 'consent', nodeId: node.id, accepted: false, ...(decline ? { ab: decline } : {}) }) }])
+      if (decline) experiments.push(decline)
+    }
+
     await this.sendText(user.externalUserId, this.render(document, session, data.text), rows)
+    await this.recordAbButtonImpressions(session, experiments)
   }
 
   private async sendProductNode(user: RuntimeUser, session: RuntimeSession, version: FunnelVersionRecord, node: FunnelNode) {
@@ -1074,12 +1110,15 @@ export class FunnelEngine {
       return
     }
     await this.event(session, 'product_viewed', { productId: product.id }, `product_view:${node.id}:${session.revision}`)
+    const payA = data.payButtonText || `Купить — ${product.price}`
+    const pay = abTextAssignment(user.id, session.versionId, `${node.id}:pay`, payA, data.payButtonAbText, node.id, (text) => this.render(version.document, session, text))
     const rows: OutgoingButton[][] = [[{
-      text: this.render(version.document, session, data.payButtonText || `Купить — ${product.price}`),
-      callbackToken: await this.store.createCallback(user.id, session.id, { type: 'product_buy', nodeId: node.id, productId: product.id }),
+      text: pay?.text ?? this.render(version.document, session, payA),
+      callbackToken: await this.store.createCallback(user.id, session.id, { type: 'product_buy', nodeId: node.id, productId: product.id, ...(pay ? { ab: pay } : {}) }),
     }]]
     if (data.allowSkip) rows.push([{ text: 'Продолжить без покупки', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'product_skip', nodeId: node.id }) }])
     await this.sendText(user.externalUserId, this.render(version.document, session, [data.headline, data.description].filter(Boolean).join('\n\n')), rows)
+    if (pay) await this.recordAbButtonImpressions(session, [pay])
     session.status = 'waiting'
     session.state.awaiting = 'payment'
     await this.save(session)
@@ -1256,7 +1295,9 @@ export class FunnelEngine {
   private async sendExternalLink(user: RuntimeUser, session: RuntimeSession, document: FunnelDocument, node: FunnelNode) {
     const data = node.data as ExternalLinkData
     const url = await this.safeActionUrl(user, session, data.url, Boolean(data.continueAfterClick))
-    const rows: OutgoingButton[][] = [[{ text: this.render(document, session, data.buttonText), url }]]
+    const assignment = abTextAssignment(user.id, session.versionId, `${node.id}:link`, data.buttonText, data.buttonAbText, node.id, (text) => this.render(document, session, text))
+    const rows: OutgoingButton[][] = [[{ text: assignment?.text ?? this.render(document, session, data.buttonText), url }]]
+    if (assignment) await this.recordAbButtonImpressions(session, [assignment])
     if (!this.options.publicBaseUrl || !data.continueAfterClick) {
       rows.push([{ text: 'Продолжить', callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId: node.id, handle: 'next' }) }])
       const suffix = !this.options.publicBaseUrl
@@ -1434,6 +1475,20 @@ export function abButtonVariant(userId: string, versionId: string, buttonId: str
   return (hash >>> 0) % 2 === 0 ? 'A' : 'B'
 }
 
+function abTextAssignment(
+  userId: string,
+  versionId: string,
+  buttonId: string,
+  textA: string,
+  textB: string | undefined,
+  contextId: string,
+  render: (text: string) => string,
+): AbButtonAssignment | null {
+  if (!textB?.trim()) return null
+  const variant = abButtonVariant(userId, versionId, buttonId)
+  return { buttonId, resultId: contextId, variant, text: render(variant === 'A' ? textA : textB) }
+}
+
 function resultButtonAssignment(
   userId: string,
   versionId: string,
@@ -1441,19 +1496,37 @@ function resultButtonAssignment(
   resultId: string,
   render: (text: string) => string,
 ): AbButtonAssignment | null {
-  if (!button.abText?.trim()) return null
-  const variant = abButtonVariant(userId, versionId, button.id)
-  return { buttonId: button.id, resultId, variant, text: render(variant === 'A' ? button.text : button.abText) }
+  return abTextAssignment(userId, versionId, button.id, button.text, button.abText, resultId, render)
 }
 
-function findAbResultButtonByUrl(document: FunnelDocument, targetUrl: string) {
+function findAbButtonByUrl(document: FunnelDocument, targetUrl: string) {
+  const matches = (url: string | undefined) => {
+    if (!url) return false
+    try { return new URL(url).toString() === targetUrl } catch { return false }
+  }
+
+  for (const node of document.nodes) {
+    if (node.type === 'message') {
+      for (const button of (node.data as MessageData).buttons) {
+        if (button.action === 'url' && button.abText?.trim() && matches(button.url)) {
+          return { buttonId: button.id, text: button.text, abText: button.abText, contextId: node.id }
+        }
+      }
+    }
+    if (node.type === 'external_link') {
+      const data = node.data as ExternalLinkData
+      if (data.buttonAbText?.trim() && matches(data.url)) {
+        return { buttonId: `${node.id}:link`, text: data.buttonText, abText: data.buttonAbText, contextId: node.id }
+      }
+    }
+  }
+
   for (const test of document.tests) {
     for (const result of [...test.results, ...test.combinedResults]) {
       for (const button of result.buttons) {
-        if (!button.abText?.trim() || button.action !== 'url' || !button.url) continue
-        try {
-          if (new URL(button.url).toString() === targetUrl) return { resultId: result.id, button }
-        } catch { /* invalid URLs are rejected before publication */ }
+        if (button.action === 'url' && button.abText?.trim() && matches(button.url)) {
+          return { buttonId: button.id, text: button.text, abText: button.abText, contextId: result.id }
+        }
       }
     }
   }

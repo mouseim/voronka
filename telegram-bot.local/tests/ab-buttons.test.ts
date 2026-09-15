@@ -22,9 +22,22 @@ describe('A/B кнопок результата', () => {
 
   it('считает показы и клики A/B отдельно и игнорирует обычную кнопку', () => {
     const document = {
+      nodes: [{
+        id: 'message-1',
+        type: 'message',
+        data: {
+          title: 'Приветствие',
+          text: 'Добро пожаловать',
+          buttons: [
+            { id: 'message-ab', text: 'Начать', abText: 'Поехали', action: 'branch' },
+            { id: 'message-normal', text: 'Обычная', action: 'branch' },
+          ],
+        },
+      }],
       tests: [{
         results: [{
           id: 'result-1',
+          name: 'Результат 1',
           buttons: [
             { id: 'button-ab', text: 'Получить разбор', abText: 'Узнать подробнее', action: 'branch' },
             { id: 'button-normal', text: 'Обычная кнопка', action: 'branch' },
@@ -42,9 +55,18 @@ describe('A/B кнопок результата', () => {
     ])
 
     expect(snapshot['button-normal']).toBeUndefined()
+    expect(snapshot['message-normal']).toBeUndefined()
+    expect(snapshot['message-ab']).toMatchObject({
+      buttonId: 'message-ab',
+      resultId: 'message-1',
+      contextLabel: 'Приветствие',
+      A: { text: 'Начать', shown: 0, clicked: 0 },
+      B: { text: 'Поехали', shown: 0, clicked: 0 },
+    })
     expect(snapshot['button-ab']).toEqual({
       buttonId: 'button-ab',
       resultId: 'result-1',
+      contextLabel: 'Результат · Результат 1',
       A: { text: 'Получить разбор', shown: 10, clicked: 3 },
       B: { text: 'Узнать подробнее', shown: 12, clicked: 6 },
     })

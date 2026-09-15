@@ -101,7 +101,7 @@ export type CallbackAction =
   | { type: 'test_value'; nodeId: string; testId: string; questionId: string; value: number }
   | { type: 'test_skip'; nodeId: string; testId: string; questionId: string }
   | { type: 'retry_result_media'; nodeId: string; testId: string; resultId: string }
-  | { type: 'consent'; nodeId: string; accepted: boolean }
+  | { type: 'consent'; nodeId: string; accepted: boolean; ab?: AbButtonAssignment }
   | { type: 'form_cancel'; nodeId: string }
   | { type: 'product_buy'; nodeId: string; productId: string; ab?: AbButtonAssignment }
   | { type: 'product_skip'; nodeId: string }
