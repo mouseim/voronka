@@ -24,8 +24,7 @@ type AdminAction =
   | { type: 'versions'; funnelId: string; page?: number }
   | { type: 'version'; versionId: string }
   | { type: 'validate'; versionId: string }
-  | { type: 'publish'; versionId: string; activate: boolean }
-  | { type: 'publish_options'; versionId: string }
+  | { type: 'activate_version'; versionId: string }
   | { type: 'emoji_menu'; versionId: string }
   | { type: 'set_emoji'; versionId: string; emoji: string | null }
   | { type: 'delete_version_confirm'; versionId: string }
@@ -223,7 +222,7 @@ export class AdminController {
       await ctx.reply(imported.created
         ? `Импортирован draft: ${parsed.document.funnel.name}, версия ${parsed.document.funnel.version}.\nID версии: ${imported.versionId}`
         : `Такая версия уже существует и совпадает по SHA‑256.\nID версии: ${imported.versionId}`,
-      { reply_markup: this.versionKeyboard(adminId, imported.versionId, imported.funnelId, false, false) })
+      { reply_markup: this.versionKeyboard(adminId, imported.versionId, imported.funnelId, false, false, 'draft') })
     } catch (error) {
       this.logger.error({ err: error, adminId }, 'Ошибка импорта .funnel')
       await ctx.reply(`Импорт не выполнен: ${humanError(error)}`)
@@ -338,7 +337,7 @@ export class AdminController {
         `Состояние: ${details.status}${details.default_for_bot ? ' · default' : ''}`,
         `ID: ${details.id}`,
       ].join('\n'), {
-        reply_markup: this.versionKeyboard(adminId, details.id, details.funnel_id, details.active, details.default_for_bot),
+        reply_markup: this.versionKeyboard(adminId, details.id, details.funnel_id, details.active, details.default_for_bot, details.status),
       })
       return
     }
@@ -349,32 +348,32 @@ export class AdminController {
       ]) })
       return
     }
-    if (action.type === 'publish_options') {
-      await ctx.reply('Как опубликовать эту версию?', {
-        reply_markup: this.keyboard(adminId, [
-          [{
-            text: '🟢 Опубликовать и сделать активной',
-            action: { type: 'publish', versionId: action.versionId, activate: true },
-            style: 'success',
-          }],
-          [{
-            text: 'Опубликовать без активации',
-            action: { type: 'publish', versionId: action.versionId, activate: false },
-          }],
-          [{ text: '← К версии', action: { type: 'version', versionId: action.versionId } }],
-        ]),
-      })
-      return
-    }
+    if (action.type === 'activate_version') {
+      const details = await this.repository.versionDetails(action.versionId)
+      if (!details) throw new Error('VERSION_NOT_FOUND')
 
-    if (action.type === 'publish') {
-      const result = await this.repository.publish(action.versionId, adminId, action.activate)
-      await ctx.reply(result.published
-        ? action.activate
-          ? 'Версия опубликована и сделана активной. Новые старты пойдут на неё.'
-          : 'Версия опубликована без активации. Текущая активная версия не изменилась.'
-        : `Публикация заблокирована:\n${formatIssues(result.issues)}`)
-      return
+      if (details.active) {
+        await ctx.reply('Эта версия уже активна.')
+        return
+      }
+
+      if (details.status === 'draft') {
+        await ctx.reply('Черновики публикуются только через сайт-конструктор.')
+        return
+      }
+
+      const result = await this.repository.publish(action.versionId, adminId, true)
+
+      await ctx.reply(
+        result.published
+          ? '🟢 Версия сделана активной. Новые пользователи будут запускаться на ней.'
+          : `Не удалось сделать версию активной:\n${formatIssues(result.issues)}`,
+      )
+
+      return this.execute(ctx, adminId, {
+        type: 'version',
+        versionId: action.versionId,
+      })
     }
 
     if (action.type === 'emoji_menu') {
@@ -728,7 +727,14 @@ export class AdminController {
     return { tgSuccess, tgTotal: telegram.length, vkSuccess, vkTotal: vk.length, failed }
   }
 
-  private versionKeyboard(adminId: string, versionId: string, funnelId: string, active: boolean, isDefault: boolean) {
+  private versionKeyboard(
+    adminId: string,
+    versionId: string,
+    funnelId: string,
+    active: boolean,
+    isDefault: boolean,
+    status: string,
+  ) {
     const rows: AdminButton[][] = [
       [
         { text: 'Проверить', action: { type: 'validate', versionId } },
@@ -741,19 +747,17 @@ export class AdminController {
       [{ text: '😀 Изменить эмоджи', action: { type: 'emoji_menu', versionId } }],
     ]
 
-    if (!active) {
-      rows.push([
-        {
-          text: '🟢 Опубликовать',
-          action: { type: 'publish', versionId, activate: true },
-          style: 'success',
-        },
-        {
-          text: '▾',
-          action: { type: 'publish_options', versionId },
-        },
-      ])
+    // Публикация новых версий выполняется только в веб-конструкторе.
+    // Telegram здесь только управляет уже опубликованными версиями.
+    if (!active && status !== 'draft') {
+      rows.push([{
+        text: '🟢 Сделать активной',
+        action: { type: 'activate_version', versionId },
+        style: 'success',
+      }])
+    }
 
+    if (!active) {
       rows.push([{
         text: '🗑 Удалить версию',
         action: { type: 'delete_version_confirm', versionId },
