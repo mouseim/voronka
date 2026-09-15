@@ -58,6 +58,7 @@ export function emptyAnalytics(version: number): FunnelAnalytics {
     tests: {},
     questions: {},
     results: {},
+    abButtons: {},
     products: {},
     sources: {},
     contacts: [],
@@ -281,14 +282,17 @@ export function variableUsageCount(document: FunnelDocument, variableId: string)
   }, 0)
 }
 
-export function trackingCodeBase(source: string, campaign: string): string {
-  const joined = [source, campaign].map((part) => slugify(part).replace(/-/g, '_')).filter(Boolean).join('_')
+export function trackingCodeBase(platform: 'telegram' | 'vk', source: string, campaign: string, content?: string): string {
+  const joined = [platform, source, campaign, content]
+    .map((part) => part?.trim() ? slugify(part).replace(/-/g, '_') : '')
+    .filter(Boolean)
+    .join('_')
   return (joined || 'source').slice(0, 48)
 }
 
-export function uniqueTrackingCode(document: FunnelDocument, source: string, campaign: string): string {
-  const base = trackingCodeBase(source, campaign)
-  const used = new Set(document.bot.trackingLinks.map((link) => link.code))
+export function uniqueTrackingCode(document: FunnelDocument, platform: 'telegram' | 'vk', source: string, campaign: string, content?: string, excludeLinkId?: string): string {
+  const base = trackingCodeBase(platform, source, campaign, content)
+  const used = new Set(document.bot.trackingLinks.filter((link) => link.id !== excludeLinkId).map((link) => link.code))
   if (!used.has(base)) return base
   let suffix = 2
   while (used.has(`${base}_${suffix}`)) suffix += 1
@@ -299,6 +303,15 @@ export function telegramDeepLink(username: string, code: string): string | null 
   const cleanUsername = username.trim().replace(/^@/, '')
   if (!cleanUsername) return null
   return `https://t.me/${cleanUsername}?start=${encodeURIComponent(code)}`
+}
+
+export function vkDeepLink(community: string | undefined, code: string, source: string): string | null {
+  const cleanCommunity = String(community ?? '').trim().replace(/^@/, '')
+  if (!cleanCommunity) return null
+  const query = `ref=${encodeURIComponent(code)}&ref_source=${encodeURIComponent(source)}`
+  if (/^\d+$/.test(cleanCommunity)) return `https://vk.com/write-${cleanCommunity}?${query}`
+  if (!/^[a-z\d_.-]+$/i.test(cleanCommunity)) return null
+  return `https://vk.me/${cleanCommunity}?${query}`
 }
 
 export function addMessageBranch(document: FunnelDocument, nodeId: string, text = 'Новая кнопка') {

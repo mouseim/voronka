@@ -17,6 +17,8 @@ export interface VkLongPollUpdate {
       peer_id?: number
       out?: number
       text?: string
+      ref?: string
+      ref_source?: string
       payload?: unknown
     }
     user_id?: number
@@ -36,10 +38,23 @@ export class VkUpdateAdapter {
 
   async handle(update: VkLongPollUpdate): Promise<boolean> {
     const updateId = vkUpdateId(update)
-    if (!updateId || !await this.store.reserveUpdate('vk', updateId)) return false
+    const permissionEvent = update.type === 'message_deny' || update.type === 'message_allow'
+    if (!updateId && !permissionEvent) return false
+    if (updateId && !await this.store.reserveUpdate('vk', updateId)) return false
     if (update.type === 'message_new') return this.handleMessage(update)
     if (update.type === 'message_event') return this.handleButton(update)
+    if (update.type === 'message_deny') return this.handleMessagePermission(update, false)
+    if (update.type === 'message_allow') return this.handleMessagePermission(update, true)
     return false
+  }
+
+  private async handleMessagePermission(update: VkLongPollUpdate, allowed: boolean) {
+    const userId = update.object?.user_id
+    if (!userId || userId <= 0) return false
+    const profile = vkProfile(userId)
+    if (allowed) await this.engine.handlePlatformOptIn(profile)
+    else await this.engine.handlePlatformOptOut(profile)
+    return true
   }
 
   private async handleMessage(update: VkLongPollUpdate) {
@@ -53,7 +68,8 @@ export class VkUpdateAdapter {
     const user = await this.store.getUserByPlatformIdentity('vk', profile.externalUserId)
     const active = user ? await this.store.findAnyActiveSession(user.id) : null
     if (!user || !active || isStartText(text)) {
-      await this.engine.start(profile)
+      const trackingCode = typeof message.ref === 'string' ? message.ref.trim() || undefined : undefined
+      await this.engine.start(profile, trackingCode)
       return true
     }
     await this.engine.handleText(profile, text)
@@ -100,6 +116,7 @@ function readCallbackToken(payload: unknown): string | null {
 
 function vkUpdateId(update: VkLongPollUpdate) {
   if (update.type === 'message_event') return update.object?.event_id ?? update.event_id ?? null
+  if (update.type === 'message_deny' || update.type === 'message_allow') return update.event_id ?? null
   const message = update.object?.message
   if (update.type !== 'message_new' || !message) return null
   return [message.peer_id, message.from_id, message.id, message.conversation_message_id, message.date].join(':')

@@ -71,6 +71,7 @@ export async function buildAnalyticsSnapshot(pool: DatabasePool, versionId: stri
     tests: aggregatePayload(eventStats.rows, ['test_started', 'test_completed'], 'testId') as Record<string, Record<string, number>>,
     questions: aggregatePayload(eventStats.rows, ['question_answered'], 'questionId') as Record<string, Record<string, number>>,
     results: aggregatePayload(eventStats.rows, ['result_viewed'], 'resultId', 'name'),
+    abButtons: abButtonSnapshot(document, eventStats.rows),
     products: productSnapshot(document, eventStats.rows, payments.rows),
     sources: sourceSnapshot(document, eventStats.rows),
     contacts: contacts.rows.map((row) => contactForFunnel(document, row)),
@@ -88,6 +89,34 @@ export async function buildAnalyticsSnapshot(pool: DatabasePool, versionId: stri
     Object.entries(revenueByCurrency).map(([currency, amountMinor]) => [currency, { amountMinor }]),
   )
   return document
+}
+
+export function abButtonSnapshot(
+  document: FunnelDocument,
+  events: Array<{ event_type: string; payload: Record<string, unknown>; count: string }>,
+) {
+  const result: NonNullable<FunnelDocument['analytics']['abButtons']> = {}
+  for (const test of document.tests) {
+    for (const testResult of [...test.results, ...test.combinedResults]) {
+      for (const button of testResult.buttons) {
+        if (!button.abText?.trim()) continue
+        result[button.id] = {
+          buttonId: button.id,
+          resultId: testResult.id,
+          A: { text: button.text, shown: 0, clicked: 0 },
+          B: { text: button.abText, shown: 0, clicked: 0 },
+        }
+      }
+    }
+  }
+  for (const event of events.filter((item) => item.event_type === 'ab_button_shown' || item.event_type === 'ab_button_clicked')) {
+    const entry = result[String(event.payload.buttonId ?? '')]
+    const variant = event.payload.variant === 'A' || event.payload.variant === 'B' ? event.payload.variant : null
+    if (!entry || !variant) continue
+    const metric = event.event_type === 'ab_button_shown' ? 'shown' : 'clicked'
+    entry[variant][metric] += Number(event.count)
+  }
+  return result
 }
 
 function aggregatePayload(

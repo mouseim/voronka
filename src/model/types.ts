@@ -195,6 +195,7 @@ export interface TestQuestion {
 export interface ResultButton {
   id: string
   text: string
+  abText?: string
   action: 'branch' | 'url' | 'product'
   url?: string
   productId?: string
@@ -275,6 +276,7 @@ export interface TrackingLink {
   id: string
   name: string
   code: string
+  platform?: 'telegram' | 'vk'
   source: string
   campaign: string
   content?: string
@@ -284,6 +286,7 @@ export interface TrackingLink {
 export interface BotSettings {
   displayName: string
   username: string
+  vkCommunity?: string
   timezone: string
   inactivityDays: number
   quietHours: {
@@ -337,6 +340,12 @@ export interface FunnelAnalytics {
   tests: Record<string, Record<string, number>>
   questions: Record<string, Record<string, number>>
   results: Record<string, Record<string, number | string>>
+  abButtons?: Record<string, {
+    buttonId: string
+    resultId: string
+    A: { text: string; shown: number; clicked: number }
+    B: { text: string; shown: number; clicked: number }
+  }>
   products: Record<string, Record<string, number>>
   sources: Record<string, SourceAnalytics>
   contacts: Array<{ id: string; name?: string; username?: string; phone?: string; email?: string; source?: string; result?: string; createdAt?: string }>

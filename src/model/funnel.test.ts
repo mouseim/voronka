@@ -8,7 +8,9 @@ import {
   removeMessageButton,
   renameMessageButton,
   telegramDeepLink,
+  trackingCodeBase,
   uniqueTrackingCode,
+  vkDeepLink,
 } from './funnel'
 import { freshDemoFunnel } from './demo'
 import { parseAndMigrateFunnelDocument } from './schema'
@@ -82,6 +84,10 @@ describe('упрощённый граф', () => {
 })
 
 describe('формат, ссылки и версии', () => {
+  it('создаёт новую воронку без демонстрационных tracking links', () => {
+    expect(createEmptyFunnel().bot.trackingLinks).toEqual([])
+  })
+
   it('старый расширенный файл отклоняется понятным сообщением', () => {
     const result = parseAndMigrateFunnelDocument({ documentType: 'funnel', schemaVersion: '1.0.0' })
     expect(result.success).toBe(false)
@@ -90,15 +96,27 @@ describe('формат, ссылки и версии', () => {
 
   it('создаёт уникальные стабильные tracking-коды', () => {
     const document = createEmptyFunnel()
-    expect(uniqueTrackingCode(document, 'Instagram', 'Test July')).toBe('instagram_test_july')
-    document.bot.trackingLinks.push({ id: 'link', name: 'Первая', code: 'instagram_test_july', source: 'Instagram', campaign: 'Test July', active: true })
-    expect(uniqueTrackingCode(document, 'Instagram', 'Test July')).toBe('instagram_test_july_2')
-    expect(document.bot.trackingLinks[0].code).toBe('instagram_test_july')
+    expect(trackingCodeBase('telegram', 'Instagram', 'Test July', 'Reels 15')).toBe('telegram_instagram_test_july_reels_15')
+    expect(uniqueTrackingCode(document, 'telegram', 'Instagram', 'Test July')).toBe('telegram_instagram_test_july')
+    document.bot.trackingLinks.push({ id: 'link', name: 'Первая', code: 'telegram_instagram_test_july', source: 'Instagram', campaign: 'Test July', active: true })
+    expect(uniqueTrackingCode(document, 'telegram', 'Instagram', 'Test July')).toBe('telegram_instagram_test_july_2')
+    expect(uniqueTrackingCode(document, 'telegram', 'Instagram', 'Test July', undefined, 'link')).toBe('telegram_instagram_test_july')
+    expect(document.bot.trackingLinks[0].code).toBe('telegram_instagram_test_july')
   })
 
-  it('строит Telegram deep link из username и кода', () => {
+  it('строит Telegram и VK deep links', () => {
     expect(telegramDeepLink('@my_bot', 'instagram_test_july')).toBe('https://t.me/my_bot?start=instagram_test_july')
     expect(telegramDeepLink('', 'code')).toBeNull()
+    expect(vkDeepLink('@my_group', 'vk_instagram_launch', 'instagram')).toBe('https://vk.me/my_group?ref=vk_instagram_launch&ref_source=instagram')
+    expect(vkDeepLink('123456', 'vk_ads', 'target')).toBe('https://vk.com/write-123456?ref=vk_ads&ref_source=target')
+    expect(vkDeepLink('', 'code', 'source')).toBeNull()
+  })
+
+  it('считает старую tracking link без platform ссылкой Telegram', () => {
+    const source = freshDemoFunnel()
+    const parsed = parseAndMigrateFunnelDocument(JSON.parse(JSON.stringify(source)))
+    expect(parsed.success).toBe(true)
+    if (parsed.success) expect(parsed.document.bot.trackingLinks.every((link) => link.platform === 'telegram')).toBe(true)
   })
 
   it('новая версия сбрасывает только статистику', () => {

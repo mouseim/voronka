@@ -23,6 +23,7 @@ import {
 } from '../core/shared'
 import { branchButtons, outgoingNodeId, splitTelegramText, stableShuffle, timerDelayMs } from '../core/semantics'
 import type {
+  AbButtonAssignment,
   CallbackAction,
   DurableJob,
   FunnelVersionRecord,
@@ -176,6 +177,18 @@ export class FunnelEngine {
     await this.stopUser(user, resolved?.version.document)
   }
 
+  async handlePlatformOptOut(profile: PlatformProfile): Promise<void> {
+    this.assertProfilePlatform(profile)
+    const user = await this.store.upsertUser(profile)
+    await this.stopUser(user, undefined, false)
+  }
+
+  async handlePlatformOptIn(profile: PlatformProfile): Promise<void> {
+    this.assertProfilePlatform(profile)
+    const user = await this.store.upsertUser(profile)
+    await this.store.setOptOut(user.id, false, false)
+  }
+
   async handleOptOutCommand(profile: PlatformProfile, text: string): Promise<boolean> {
     this.assertProfilePlatform(profile)
     const existingUser = await this.store.getUserByPlatformIdentity(profile.platform, profile.externalUserId)
@@ -188,7 +201,7 @@ export class FunnelEngine {
     return true
   }
 
-  private async stopUser(user: RuntimeUser, document?: FunnelDocument): Promise<void> {
+  private async stopUser(user: RuntimeUser, document?: FunnelDocument, notify = true): Promise<void> {
     await this.store.setOptOut(user.id, true, document?.bot.optOut.blockBackground ?? true)
     const sessionIds = await this.store.stopUserSessions(user.id)
     await Promise.all(sessionIds.map((sessionId) => this.store.cancelSessionJobs(sessionId)))
@@ -198,7 +211,7 @@ export class FunnelEngine {
       userId: user.id,
       payload: {},
     })
-    await this.transport.sendText(user.externalUserId, document?.bot.optOut.confirmationText || 'Вы отписались от фоновых сообщений.')
+    if (notify) await this.transport.sendText(user.externalUserId, document?.bot.optOut.confirmationText || 'Вы отписались от фоновых сообщений.')
   }
 
   async handleCallback(profile: PlatformProfile, token: string): Promise<boolean> {
@@ -248,6 +261,7 @@ export class FunnelEngine {
     }
     const version = await this.requireVersion(session.versionId)
     const action = callback.action
+    if ('ab' in action && action.ab) await this.event(session, 'ab_button_clicked', { ...action.ab }, `ab_click:${token}`)
     if ('nodeId' in action && action.nodeId !== session.currentNodeId) {
       await this.transport.sendText(user.externalUserId, 'Эта кнопка относится к предыдущему этапу и больше не действует.')
       return false
@@ -409,8 +423,13 @@ export class FunnelEngine {
     const session = await this.store.getSession(redirect.sessionId)
     if (session) {
       await this.event(session, 'external_link_clicked', { targetHost: new URL(redirect.targetUrl).host }, `redirect:${token}`)
+      const version = await this.requireVersion(session.versionId)
+      const matched = findAbResultButtonByUrl(version.document, redirect.targetUrl)
+      if (matched) {
+        const assignment = resultButtonAssignment(session.userId, session.versionId, matched.button, matched.resultId, (text) => this.render(version.document, session, text))
+        if (assignment) await this.event(session, 'ab_button_clicked', { ...assignment }, `ab_click:${token}`)
+      }
       if (redirect.continueAfterClick) {
-        const version = await this.requireVersion(session.versionId)
         await this.store.scheduleJob({
           uniqueKey: `redirect:${token}`,
           type: 'redirect_continue',
@@ -762,16 +781,19 @@ export class FunnelEngine {
     if (!test || !result) throw new Error(`PENDING_TEST_RESULT_NOT_FOUND:${pending.testId}:${pending.resultId}`)
 
     if (!pending.textDelivered) {
-      const rows = !result.assetId && result.buttons.length
+      const prepared = !result.assetId && result.buttons.length
         ? await this.resultButtons(user, session, version.document, result.buttons, pending.nodeId, result.id)
         : undefined
       await this.sendText(
         user.externalUserId,
         this.render(version.document, session, [result.shortText, result.fullText, result.recommendations].filter(Boolean).join('\n\n')),
-        rows,
+        prepared?.rows,
       )
       pending.textDelivered = true
-      if (rows?.length) pending.actionsDelivered = true
+      if (prepared?.rows.length) {
+        pending.actionsDelivered = true
+        await this.recordAbButtonImpressions(session, prepared.experiments)
+      }
       session = await this.save(session)
       pending = session.state.pendingTestResult!
       await this.event(session, 'result_viewed', { resultId: result.id, name: result.name }, `result:${pending.nodeId}:${result.id}`)
@@ -808,8 +830,11 @@ export class FunnelEngine {
       return
     }
     if (!pending.actionsDelivered) {
-      const rows = await this.resultButtons(user, session, version.document, result.buttons, pending.nodeId, result.id)
-      if (rows.length) await this.transport.sendText(user.externalUserId, `Действия для результата «${this.render(version.document, session, result.name)}»`, rows)
+      const prepared = await this.resultButtons(user, session, version.document, result.buttons, pending.nodeId, result.id)
+      if (prepared.rows.length) {
+        await this.transport.sendText(user.externalUserId, `Действия для результата «${this.render(version.document, session, result.name)}»`, prepared.rows)
+        await this.recordAbButtonImpressions(session, prepared.experiments)
+      }
       pending.actionsDelivered = true
       session = await this.save(session)
     }
@@ -1253,16 +1278,31 @@ export class FunnelEngine {
 
   private async resultButtons(user: RuntimeUser, session: RuntimeSession, document: FunnelDocument, buttons: ResultButton[], nodeId: string, resultHandle: string) {
     const rows: OutgoingButton[][] = []
+    const experiments: AbButtonAssignment[] = []
     for (const button of buttons) {
+      const assignment = resultButtonAssignment(user.id, session.versionId, button, resultHandle, (text) => this.render(document, session, text))
+      const text = assignment?.text ?? this.render(document, session, button.text)
+      let shown = false
       if (button.action === 'branch') {
-        rows.push([{ text: this.render(document, session, button.text), callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId, handle: resultHandle }) }])
+        rows.push([{ text, callbackToken: await this.store.createCallback(user.id, session.id, { type: 'advance', nodeId, handle: resultHandle, ...(assignment ? { ab: assignment } : {}) }) }])
+        shown = true
       } else if (button.action === 'url' && button.url) {
-        rows.push([{ text: this.render(document, session, button.text), url: await this.safeActionUrl(user, session, button.url, false) }])
+        rows.push([{ text, url: await this.safeActionUrl(user, session, button.url, false) }])
+        shown = true
       } else if (button.action === 'product' && button.productId) {
-        rows.push([{ text: this.render(document, session, button.text), callbackToken: await this.store.createCallback(user.id, session.id, { type: 'product_buy', nodeId, productId: button.productId }) }])
+        rows.push([{ text, callbackToken: await this.store.createCallback(user.id, session.id, { type: 'product_buy', nodeId, productId: button.productId, ...(assignment ? { ab: assignment } : {}) }) }])
+        shown = true
       }
+      if (assignment && shown) experiments.push(assignment)
     }
-    return rows
+    return { rows, experiments }
+  }
+
+  private async recordAbButtonImpressions(session: RuntimeSession, experiments: AbButtonAssignment[]) {
+    await Promise.all(experiments.map((assignment) => this.event(
+      session, 'ab_button_shown', { ...assignment },
+      `ab_shown:${assignment.resultId}:${assignment.buttonId}:${session.revision}`,
+    )))
   }
 
   private currentQuestion(document: FunnelDocument, run: RuntimeSession['state']['testRun']): TestQuestion | undefined {
@@ -1383,6 +1423,41 @@ export class FunnelEngine {
       occurredAt: this.now().toISOString(),
     })
   }
+}
+
+export function abButtonVariant(userId: string, versionId: string, buttonId: string): 'A' | 'B' {
+  let hash = 2_166_136_261
+  for (const character of `${userId}:${versionId}:${buttonId}`) {
+    hash ^= character.codePointAt(0) ?? 0
+    hash = Math.imul(hash, 16_777_619)
+  }
+  return (hash >>> 0) % 2 === 0 ? 'A' : 'B'
+}
+
+function resultButtonAssignment(
+  userId: string,
+  versionId: string,
+  button: ResultButton,
+  resultId: string,
+  render: (text: string) => string,
+): AbButtonAssignment | null {
+  if (!button.abText?.trim()) return null
+  const variant = abButtonVariant(userId, versionId, button.id)
+  return { buttonId: button.id, resultId, variant, text: render(variant === 'A' ? button.text : button.abText) }
+}
+
+function findAbResultButtonByUrl(document: FunnelDocument, targetUrl: string) {
+  for (const test of document.tests) {
+    for (const result of [...test.results, ...test.combinedResults]) {
+      for (const button of result.buttons) {
+        if (!button.abText?.trim() || button.action !== 'url' || !button.url) continue
+        try {
+          if (new URL(button.url).toString() === targetUrl) return { resultId: result.id, button }
+        } catch { /* invalid URLs are rejected before publication */ }
+      }
+    }
+  }
+  return null
 }
 
 function normalizeTelegramCommand(value: string | undefined): string | null {

@@ -94,7 +94,7 @@ export interface RuntimeSession {
 }
 
 export type CallbackAction =
-  | { type: 'advance'; nodeId: string; handle: string }
+  | { type: 'advance'; nodeId: string; handle: string; ab?: AbButtonAssignment }
   | { type: 'test_single'; nodeId: string; testId: string; questionId: string; answerId: string }
   | { type: 'test_toggle'; nodeId: string; testId: string; questionId: string; answerId: string }
   | { type: 'test_submit'; nodeId: string; testId: string; questionId: string }
@@ -103,11 +103,18 @@ export type CallbackAction =
   | { type: 'retry_result_media'; nodeId: string; testId: string; resultId: string }
   | { type: 'consent'; nodeId: string; accepted: boolean }
   | { type: 'form_cancel'; nodeId: string }
-  | { type: 'product_buy'; nodeId: string; productId: string }
+  | { type: 'product_buy'; nodeId: string; productId: string; ab?: AbButtonAssignment }
   | { type: 'product_skip'; nodeId: string }
   | { type: 'mock_payment'; paymentId: string }
   | { type: 'check_payment'; paymentId: string }
   | { type: 'restart'; funnelId: string }
+
+export interface AbButtonAssignment {
+  buttonId: string
+  resultId: string
+  variant: 'A' | 'B'
+  text: string
+}
 
 export interface CallbackRecord {
   token: string

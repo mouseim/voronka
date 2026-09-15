@@ -70,7 +70,9 @@ describe('цикл файла', () => {
     expect(result.document.edges).toEqual(source.edges)
     expect(result.document.tests).toEqual(source.tests)
     expect(result.document.analytics).toEqual(source.analytics)
-    expect(result.document.bot.trackingLinks).toEqual(source.bot.trackingLinks)
+    expect(result.document.bot.trackingLinks).toEqual(
+      source.bot.trackingLinks.map((link) => ({ ...link, platform: link.platform ?? 'telegram' })),
+    )
   })
 
   it('статистика источника читается по стабильному ID ссылки', () => {

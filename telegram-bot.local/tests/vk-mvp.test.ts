@@ -156,6 +156,44 @@ describe('VK MVP', () => {
     expect(runtime.api.messages.filter((message) => message.message === 'Выберите путь')).toHaveLength(2)
   })
 
+  it('передаёт message.ref как tracking code при старте VK', async () => {
+    const document = await branchDocument()
+    document.bot.trackingLinks = [{
+      id: 'vk-link', name: 'VK реклама', code: 'vk_ads_launch', platform: 'vk',
+      source: 'vk_ads', campaign: 'launch', active: true,
+    }]
+    const runtime = vkRuntime(document)
+
+    await runtime.adapter.handle(messageUpdate(304, 'Начать', 1, 'vk_ads_launch'))
+
+    expect([...runtime.store.sessions.values()][0]).toMatchObject({ sourceTrackingId: 'vk-link', sourceCode: 'vk_ads_launch' })
+  })
+
+  it('обрабатывает message_deny/message_allow без сообщений и новых сессий', async () => {
+    const runtime = vkRuntime(await branchDocument())
+    await runtime.adapter.handle(messageUpdate(305, 'Начать', 1))
+    const session = [...runtime.store.sessions.values()][0]!
+    await runtime.store.scheduleJob({
+      uniqueKey: 'vk-deny-job', type: 'reminder', payload: { sessionId: session.id },
+      dueAt: new Date().toISOString(), maxAttempts: 1,
+    })
+    const messagesBefore = runtime.api.messages.length
+
+    await expect(runtime.adapter.handle(permissionUpdate('message_deny', 305, 'deny-1'))).resolves.toBe(true)
+    expect(await runtime.store.getUserByPlatformIdentity('vk', '305')).toMatchObject({ optedOutAt: expect.any(String), backgroundBlocked: true })
+    expect((await runtime.store.getSession(session.id))?.status).toBe('stopped')
+    expect([...runtime.store.jobs.values()][0]?.status).toBe('cancelled')
+    expect(runtime.api.messages).toHaveLength(messagesBefore)
+    await expect(runtime.adapter.handle(permissionUpdate('message_deny', 305, 'deny-2'))).resolves.toBe(true)
+
+    const sessionsBeforeAllow = runtime.store.sessions.size
+    await expect(runtime.adapter.handle(permissionUpdate('message_allow', 305, 'allow-1'))).resolves.toBe(true)
+    expect(await runtime.store.getUserByPlatformIdentity('vk', '305')).toMatchObject({ optedOutAt: null, backgroundBlocked: false })
+    expect(runtime.store.sessions.size).toBe(sessionsBeforeAllow)
+    expect(runtime.api.messages).toHaveLength(messagesBefore)
+    await expect(runtime.adapter.handle(permissionUpdate('message_allow', 305, 'allow-2'))).resolves.toBe(true)
+  })
+
   it('явно отклоняет достижимый VK product как unsupported capability', async () => {
     const document = await unsupportedProductDocument()
     const runtime = vkRuntime(document)
@@ -242,15 +280,19 @@ function vkRuntime(document: FunnelDocument) {
   return { store, api, engine, adapter }
 }
 
-function messageUpdate(userId: number, text: string, id: number): VkLongPollUpdate {
+function messageUpdate(userId: number, text: string, id: number, ref?: string): VkLongPollUpdate {
   return {
     type: 'message_new',
-    object: { message: { id, conversation_message_id: id, date: 1_800_000_000 + id, from_id: userId, peer_id: userId, text } },
+    object: { message: { id, conversation_message_id: id, date: 1_800_000_000 + id, from_id: userId, peer_id: userId, text, ref } },
   }
 }
 
 function buttonUpdate(userId: number, payload: object, eventId: string): VkLongPollUpdate {
   return { type: 'message_event', object: { user_id: userId, peer_id: userId, event_id: eventId, payload } }
+}
+
+function permissionUpdate(type: 'message_deny' | 'message_allow', userId: number, eventId: string): VkLongPollUpdate {
+  return { type, event_id: eventId, object: { user_id: userId } }
 }
 
 async function branchDocument() {

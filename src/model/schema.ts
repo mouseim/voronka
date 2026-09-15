@@ -7,6 +7,7 @@ const base = z.object({ title: z.string() }).passthrough()
 const messageButton = z.object({
   id: z.string().min(1),
   text: z.string(),
+  abText: z.string().optional(),
   action: z.enum(['branch', 'url', 'product']),
   url: z.string().optional(),
   productId: z.string().optional(),
@@ -130,6 +131,7 @@ const trackingLinkSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
   code: z.string().min(1),
+  platform: z.enum(['telegram', 'vk']).default('telegram'),
   source: z.string(),
   campaign: z.string(),
   content: z.string().optional(),
@@ -151,6 +153,12 @@ const analyticsSchema = z.object({
   tests: z.record(z.record(z.number())),
   questions: z.record(z.record(z.number())),
   results: z.record(z.record(z.union([z.number(), z.string()]))),
+  abButtons: z.record(z.object({
+    buttonId: z.string(),
+    resultId: z.string(),
+    A: z.object({ text: z.string(), shown: z.number().nonnegative(), clicked: z.number().nonnegative() }),
+    B: z.object({ text: z.string(), shown: z.number().nonnegative(), clicked: z.number().nonnegative() }),
+  })).optional(),
   products: z.record(z.record(z.number())),
   sources: z.record(z.object({
     arrived: z.number().nonnegative(),
@@ -184,6 +192,7 @@ const documentSchema = z.object({
   bot: z.object({
     displayName: z.string(),
     username: z.string(),
+    vkCommunity: z.string().optional(),
     timezone: z.string(),
     inactivityDays: z.number().int().positive(),
     quietHours: z.object({ enabled: z.boolean(), from: z.string(), to: z.string(), behavior: z.enum(['postpone', 'skip']) }).passthrough(),
