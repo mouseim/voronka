@@ -2,21 +2,31 @@ import { expect, test } from '@playwright/test'
 import path from 'node:path'
 import { freshDemoFunnel } from '../src/model/demo'
 
-test('упрощённое демо открывает схему, тесты, предпросмотр и источники', async ({ page }, testInfo) => {
+test('полное демо Олеси открывает схему, тесты и предпросмотр', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === 'mobile', 'Основной desktop-сценарий')
   await page.goto('/')
   await page.getByRole('button', { name: /Открыть полное демо/ }).click()
+
   await expect(page.getByLabel('Название воронки')).toHaveValue('7 внутренних механизмов')
-  await expect(page.locator('.funnel-node')).toHaveCount(15)
+  await expect(page.locator('.funnel-node')).toHaveCount(125)
   await expect(page.locator('.react-flow__minimap')).toHaveCount(0)
   await expect(page.locator('.canvas-tools')).toHaveCount(0)
+
   const viewport = page.locator('.react-flow__viewport')
   const viewportBeforePan = await viewport.getAttribute('style')
   const paneBox = await page.locator('.react-flow__pane').boundingBox()
   if (!paneBox) throw new Error('Холст не найден')
-  await page.mouse.move(paneBox.x + paneBox.width * .75, paneBox.y + paneBox.height * .9)
+
+  await page.mouse.move(
+    paneBox.x + paneBox.width * .75,
+    paneBox.y + paneBox.height * .9,
+  )
   await page.mouse.down()
-  await page.mouse.move(paneBox.x + paneBox.width * .75 + 70, paneBox.y + paneBox.height * .9 - 45, { steps: 4 })
+  await page.mouse.move(
+    paneBox.x + paneBox.width * .75 + 70,
+    paneBox.y + paneBox.height * .9 - 45,
+    { steps: 4 },
+  )
   await page.mouse.up()
   await expect.poll(() => viewport.getAttribute('style')).not.toBe(viewportBeforePan)
 
@@ -24,48 +34,97 @@ test('упрощённое демо открывает схему, тесты, �
   const nodeBeforeDrag = await firstNode.getAttribute('style')
   const nodeBox = await firstNode.boundingBox()
   if (!nodeBox) throw new Error('Блок не найден')
-  await page.mouse.move(nodeBox.x + nodeBox.width / 2, nodeBox.y + nodeBox.height / 2)
+
+  await page.mouse.move(
+    nodeBox.x + nodeBox.width / 2,
+    nodeBox.y + nodeBox.height / 2,
+  )
   await page.mouse.down()
-  await page.mouse.move(nodeBox.x + nodeBox.width / 2 + 45, nodeBox.y + nodeBox.height / 2 + 30, { steps: 4 })
+  await page.mouse.move(
+    nodeBox.x + nodeBox.width / 2 + 45,
+    nodeBox.y + nodeBox.height / 2 + 30,
+    { steps: 4 },
+  )
   await page.mouse.up()
   await expect.poll(() => firstNode.getAttribute('style')).not.toBe(nodeBeforeDrag)
 
-  const selectionStart = { x: paneBox.x + paneBox.width * .85, y: paneBox.y + paneBox.height * .92 }
-  await page.locator('.react-flow__pane').click({ position: { x: paneBox.width * .85, y: paneBox.height * .92 } })
+  const selectionStart = {
+    x: paneBox.x + paneBox.width * .85,
+    y: paneBox.y + paneBox.height * .92,
+  }
+
+  await page.locator('.react-flow__pane').click({
+    position: {
+      x: paneBox.width * .85,
+      y: paneBox.height * .92,
+    },
+  })
   await expect(page.locator('.canvas-selection-ready')).toBeVisible()
+
   await page.mouse.move(selectionStart.x, selectionStart.y)
   await page.mouse.down()
-  await page.mouse.move(selectionStart.x - 150, selectionStart.y - 90, { steps: 4 })
+  await page.mouse.move(
+    selectionStart.x - 150,
+    selectionStart.y - 90,
+    { steps: 4 },
+  )
   await expect(page.locator('.react-flow__selection')).toBeVisible()
   await page.mouse.up()
   await expect(page.locator('.canvas-selection-ready')).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Переменные', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Переменные' })).toBeVisible()
-  await expect(page.getByText('Интерес к подробному разбору', { exact: true }).first()).toBeVisible()
+  await expect(
+    page.getByText('Ведущая шкала для персонализации', { exact: true }).first(),
+  ).toBeVisible()
 
   await page.getByRole('button', { name: 'Тесты' }).click()
   await expect(page.getByRole('heading', { name: 'Психологические тесты' })).toBeVisible()
-  await expect(page.getByText('7 внутренних механизмов', { exact: true }).first()).toBeVisible()
+  await expect(
+    page.getByText('7 внутренних механизмов', { exact: true }).first(),
+  ).toBeVisible()
+
   await page.getByRole('button', { name: 'Результаты' }).click()
   await expect(page.getByText('Как выбирается результат')).toBeVisible()
 
   await page.getByRole('button', { name: 'Схема' }).click()
   await page.getByRole('button', { name: 'Предпросмотр' }).click()
-  await expect(page.getByRole('dialog', { name: 'Предпросмотр воронки' })).toBeVisible()
+
+  await expect(
+    page.getByRole('dialog', { name: 'Предпросмотр воронки' }),
+  ).toBeVisible()
+
   await page.getByRole('button', { name: 'Начать', exact: true }).click()
-  await expect(page.getByText(/Здравствуйте! Пройдите короткую диагностику/)).toBeVisible()
-  await page.getByRole('button', { name: 'Пройти тест' }).click()
-  await page.getByRole('button', { name: 'Применить и продолжить' }).click()
-  await page.getByRole('button', { name: 'Продолжить', exact: true }).click()
-  await expect(page.getByText('Что вам важнее всего в сложной ситуации?')).toBeVisible()
+
+  await expect(
+    page.getByText(/Здравствуйте\. Меня зовут Олеся/),
+  ).toBeVisible()
+
+  await page.getByRole('button', { name: 'Начать диагностику' }).click()
+
+  await expect(
+    page.getByText(/Чтобы показать ваш результат и сопровождать вас/),
+  ).toBeVisible()
+
+  await page.getByRole('button', { name: 'Согласна и продолжить' }).click()
+
+  await expect(
+    page.getByText(/Не пытайтесь отвечать правильно/),
+  ).toBeVisible()
+
+  await page.getByRole('button', { name: 'Начать', exact: true }).click()
+
+  await expect(
+    page.getByText(/Суббота\. Будильник молчит/),
+  ).toBeVisible()
+
   await page.getByLabel('Закрыть').click()
 
   await page.getByRole('button', { name: 'Статистика' }).click()
   await expect(page.getByRole('heading', { name: 'Как работает воронка' })).toBeVisible()
-  await page.getByRole('button', { name: 'Источники' }).click()
-  await expect(page.getByText('Instagram — Reels про тест')).toBeVisible()
-  await expect(page.getByText('840', { exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'В этом файле ещё нет статистики' }),
+  ).toBeVisible()
 })
 
 test('старый расширенный fixture отклоняется понятным сообщением', async ({ page }, testInfo) => {

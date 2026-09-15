@@ -1,4 +1,4 @@
-import fullDemo from './olesya-full-demo.json'
+import fullDemo from './olesya-full-demo.json' with { type: 'json' }
 import type { FunnelDocument } from './types'
 
 const demoTemplate = fullDemo as unknown as FunnelDocument
