@@ -19,7 +19,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { assetUsageCount, newId, productUsageCount, slugify, telegramDeepLink, uniqueTrackingCode, variableUsageCount, vkDeepLink } from '../model/funnel'
+import { assetUsageCount, newId, productUsageCount, slugify, telegramDeepLink, variableUsageCount, vkDeepLink } from '../model/funnel'
 import { defaultValueForType, VARIABLE_TYPE_LABELS } from '../model/variables'
 import { calculateTestResult } from '../model/scoring'
 import { mediaPlatformReadiness, vkMediaCapability } from '../model/platformMedia'
@@ -419,8 +419,18 @@ function BotSection({ document }: { document: FunnelDocument }) {
   const bot = document.bot
   const update = (run: (draft: FunnelDocument['bot']) => void) => updateDocument((draft) => run(draft.bot))
   const addLink = () => {
-    const code = uniqueTrackingCode(document, 'telegram', '', '')
-    const link: TrackingLink = { id: newId('tracking'), name: 'Новая отслеживаемая ссылка', code, platform: 'telegram', source: '', campaign: '', active: true }
+    const code = `link_${crypto.randomUUID().slice(0, 8)}`
+    const link: TrackingLink = {
+      id: newId('tracking'),
+      name: 'Новая отслеживаемая ссылка',
+      code,
+      platform: 'telegram',
+      description: '',
+      locked: false,
+      source: '',
+      campaign: '',
+      active: true,
+    }
     update((draft) => { draft.trackingLinks.push(link) })
   }
   return <><PageHeading eyebrow="Telegram + VK" title="Настройки бота" text="Здесь нет токенов и секретов — только поведение ботов и публичные имена." /><div className="settings-stack">
@@ -435,11 +445,137 @@ function BotSection({ document }: { document: FunnelDocument }) {
 
 function TrackingLinkEditor({ document, link }: { document: FunnelDocument; link: TrackingLink }) {
   const updateDocument = useEditorStore((state) => state.updateDocument)
-  const patch = (changes: Partial<TrackingLink>) => updateDocument((draft) => { const target = draft.bot.trackingLinks.find((item) => item.id === link.id); if (target) Object.assign(target, changes) })
+  const patch = (changes: Partial<TrackingLink>) => updateDocument((draft) => {
+    const target = draft.bot.trackingLinks.find((item) => item.id === link.id)
+    if (target) Object.assign(target, changes)
+  })
+
   const platform = link.platform ?? 'telegram'
-  const candidateCode = uniqueTrackingCode(document, platform, link.source, link.campaign, link.content, link.id)
-  const fullLink = platform === 'telegram' ? telegramDeepLink(document.bot.username, link.code) : vkDeepLink(document.bot.vkCommunity, link.code, link.source)
-  return <article className="tracking-card"><div className="tracking-card-head"><Link2 size={18} /><input value={link.name} onChange={(event) => patch({ name: event.target.value })} /><Toggle checked={link.active} onChange={(active) => patch({ active })} label={link.active ? 'Активна' : 'Выключена'} /></div><div className="form-grid"><Field label="Платформа"><select value={platform} onChange={(event) => patch({ platform: event.target.value as 'telegram' | 'vk' })}><option value="telegram">Telegram</option><option value="vk">VK</option></select></Field><Field label="Источник"><input value={link.source} onChange={(event) => patch({ source: event.target.value })} /></Field><Field label="Кампания"><input value={link.campaign} onChange={(event) => patch({ campaign: event.target.value })} /></Field><Field label="Метка контента"><input value={link.content ?? ''} onChange={(event) => patch({ content: event.target.value || undefined })} /></Field></div><div className="generated-link"><span>Код ссылки</span><code>{link.code}</code><button onClick={() => patch({ code: candidateCode })}>Обновить код по полям</button></div>{candidateCode !== link.code && <p className="panel-help">Поля изменены. Нажмите «Обновить код по полям», если хотите изменить саму ссылку.</p>}{fullLink ? <div className="generated-link"><span>{platform === 'telegram' ? 'Telegram-ссылка' : 'VK-ссылка'}</span><code>{fullLink}</code><button onClick={async () => { await navigator.clipboard.writeText(fullLink) }}><Copy size={14} /> Копировать</button></div> : <p className="panel-help">{platform === 'telegram' ? 'Укажите Telegram username бота выше.' : 'Укажите сообщество VK в настройках бота.'}</p>}<button className="text-button danger" onClick={() => { if (!confirm(`Удалить ссылку «${link.name}»?`)) return; updateDocument((draft) => { draft.bot.trackingLinks = draft.bot.trackingLinks.filter((item) => item.id !== link.id) }) }}><Trash2 size={14} /> Удалить ссылку</button></article>
+  const locked = link.locked ?? true
+  const code = link.code.trim()
+  const description = link.description ?? [link.source, link.campaign, link.content].filter(Boolean).join(' · ')
+  const codeValid = /^[A-Za-z0-9_-]{1,48}$/.test(code)
+  const duplicateCode = document.bot.trackingLinks.some((item) =>
+    item.id !== link.id && item.code.trim().toLowerCase() === code.toLowerCase()
+  )
+
+  const fullLink = codeValid
+    ? platform === 'telegram'
+      ? telegramDeepLink(document.bot.username, code)
+      : vkDeepLink(document.bot.vkCommunity, code)
+    : null
+
+  const lockLink = () => {
+    if (!codeValid) {
+      alert('Код ссылки должен содержать от 1 до 48 символов: латинские буквы, цифры, _ или -.')
+      return
+    }
+    if (duplicateCode) {
+      alert('Такой код уже используется другой ссылкой. Введите уникальный код.')
+      return
+    }
+    patch({ code, platform, locked: true })
+  }
+
+  return <article className="tracking-card">
+    <div className="tracking-card-head">
+      <Link2 size={18} />
+      <input
+        value={link.name}
+        placeholder="Название ссылки"
+        onChange={(event) => patch({ name: event.target.value })}
+      />
+      <Toggle
+        checked={link.active}
+        onChange={(active) => patch({ active })}
+        label={link.active ? 'Активна' : 'Выключена'}
+      />
+    </div>
+
+    <div className="form-grid">
+      <Field label="Платформа">
+        <select
+          value={platform}
+          disabled={locked}
+          onChange={(event) => patch({ platform: event.target.value as 'telegram' | 'vk' })}
+        >
+          <option value="telegram">Telegram</option>
+          <option value="vk">VK</option>
+        </select>
+      </Field>
+
+      <Field label="Код ссылки">
+        <input
+          value={link.code}
+          disabled={locked}
+          maxLength={48}
+          placeholder="masha_sep"
+          onChange={(event) => patch({
+            code: event.target.value.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 48),
+          })}
+        />
+      </Field>
+    </div>
+
+    <Field label="Описание / заметка">
+      <textarea
+        rows={3}
+        value={description}
+        placeholder="Например: интеграция у Маши, ролик №2, 15 сентября"
+        onChange={(event) => patch({ description: event.target.value })}
+      />
+    </Field>
+
+    {!locked && <>
+      <div className="friendly-note">
+        Проверьте платформу и код. После фиксации их нельзя будет изменить — только удалить ссылку и создать новую.
+      </div>
+
+      {!codeValid && <p className="panel-help">
+        Код: 1–48 символов, только латинские буквы, цифры, дефис и подчёркивание.
+      </p>}
+
+      {duplicateCode && <p className="panel-help">
+        Такой код уже используется другой ссылкой.
+      </p>}
+
+      <button
+        className="button primary"
+        disabled={!codeValid || duplicateCode}
+        onClick={lockLink}
+      >
+        Зафиксировать ссылку
+      </button>
+    </>}
+
+    {locked && <p className="panel-help">
+      Код <strong>{link.code}</strong> и платформа зафиксированы. Название, описание и статус можно менять.
+    </p>}
+
+    {fullLink ? <div className="generated-link">
+      <span>{platform === 'telegram' ? 'Telegram-ссылка' : 'VK-ссылка'}</span>
+      <code>{fullLink}</code>
+      <button onClick={async () => { await navigator.clipboard.writeText(fullLink) }}>
+        <Copy size={14} /> Копировать
+      </button>
+    </div> : <p className="panel-help">
+      {platform === 'telegram'
+        ? 'Чтобы получить готовую Telegram-ссылку, укажите username бота выше.'
+        : 'Чтобы получить готовую VK-ссылку, укажите ID, короткое имя или ссылку на сообщество VK выше.'}
+    </p>}
+
+    <button
+      className="text-button danger"
+      onClick={() => {
+        if (!confirm(`Удалить ссылку «${link.name}»?`)) return
+        updateDocument((draft) => {
+          draft.bot.trackingLinks = draft.bot.trackingLinks.filter((item) => item.id !== link.id)
+        })
+      }}
+    >
+      <Trash2 size={14} /> Удалить ссылку
+    </button>
+  </article>
 }
 
 function createScale(index: number): TestScale { return { id: newId('scale'), code: `S${index}`, name: `Шкала ${index}`, color: ['#7c5ce7', '#2f80ed', '#f2994a', '#27ae60'][index % 4] } }

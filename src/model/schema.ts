@@ -132,6 +132,8 @@ const trackingLinkSchema = z.object({
   name: z.string(),
   code: z.string().min(1),
   platform: z.enum(['telegram', 'vk']).default('telegram'),
+  description: z.string().optional(),
+  locked: z.boolean().default(true),
   source: z.string(),
   campaign: z.string(),
   content: z.string().optional(),

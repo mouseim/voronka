@@ -277,6 +277,8 @@ export interface TrackingLink {
   name: string
   code: string
   platform?: 'telegram' | 'vk'
+  description?: string
+  locked?: boolean
   source: string
   campaign: string
   content?: string

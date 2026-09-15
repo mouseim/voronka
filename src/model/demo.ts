@@ -104,8 +104,8 @@ export function freshDemoFunnel(): FunnelDocument {
   document.bot.displayName = 'Диагностика механизмов'
   document.bot.username = 'mechanisms_demo_bot'
   document.bot.trackingLinks = [
-    { id: 'tracking_instagram', name: 'Instagram — Reels про тест', code: 'instagram_test_july', platform: 'telegram', source: 'instagram', campaign: 'test_july', content: 'reels_03', active: true },
-    { id: 'tracking_channel', name: 'Telegram-канал', code: 'telegram_channel', platform: 'telegram', source: 'telegram', campaign: 'channel', active: true },
+    { id: 'tracking_instagram', name: 'Instagram — Reels про тест', code: 'instagram_test_july', platform: 'telegram', description: 'Reels про тест', locked: true, source: 'instagram', campaign: 'test_july', content: 'reels_03', active: true },
+    { id: 'tracking_channel', name: 'Telegram-канал', code: 'telegram_channel', platform: 'telegram', description: 'Основной Telegram-канал', locked: true, source: 'telegram', campaign: 'channel', active: true },
   ]
 
   const assets: MediaAsset[] = [

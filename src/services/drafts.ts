@@ -159,6 +159,13 @@ export function documentsMatchForSync(left: FunnelDocument, right: FunnelDocumen
 
 function syncComparable(source: FunnelDocument) {
   const document = structuredClone(source)
+  document.bot.trackingLinks = document.bot.trackingLinks.map((link) => ({
+    ...link,
+    platform: link.platform ?? 'telegram',
+    locked: link.locked ?? true,
+    source: link.source ?? '',
+    campaign: link.campaign ?? '',
+  }))
   document.funnel.status = 'published'
   document.funnel.updatedAt = ''
   document.analytics = emptyAnalytics(document.funnel.version)

@@ -305,12 +305,25 @@ export function telegramDeepLink(username: string, code: string): string | null 
   return `https://t.me/${cleanUsername}?start=${encodeURIComponent(code)}`
 }
 
-export function vkDeepLink(community: string | undefined, code: string, source: string): string | null {
-  const cleanCommunity = String(community ?? '').trim().replace(/^@/, '')
+export function vkDeepLink(community: string | undefined, code: string): string | null {
+  let cleanCommunity = String(community ?? '').trim()
+  if (!cleanCommunity || !code.trim()) return null
+
+  cleanCommunity = cleanCommunity
+    .replace(/^https?:\/\/(?:www\.)?vk\.com\//i, '')
+    .replace(/^https?:\/\/vk\.me\//i, '')
+    .replace(/^@/, '')
+    .split(/[/?#]/)[0]
+    .trim()
+
   if (!cleanCommunity) return null
-  const query = `ref=${encodeURIComponent(code)}&ref_source=${encodeURIComponent(source)}`
-  if (/^\d+$/.test(cleanCommunity)) return `https://vk.com/write-${cleanCommunity}?${query}`
+
+  const numeric = cleanCommunity.match(/^(?:club|public)?-?(\d+)$/i)
+  const query = `ref=${encodeURIComponent(code.trim())}`
+
+  if (numeric) return `https://vk.com/write-${numeric[1]}?${query}`
   if (!/^[a-z\d_.-]+$/i.test(cleanCommunity)) return null
+
   return `https://vk.me/${cleanCommunity}?${query}`
 }
 

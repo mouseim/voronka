@@ -107,16 +107,21 @@ describe('формат, ссылки и версии', () => {
   it('строит Telegram и VK deep links', () => {
     expect(telegramDeepLink('@my_bot', 'instagram_test_july')).toBe('https://t.me/my_bot?start=instagram_test_july')
     expect(telegramDeepLink('', 'code')).toBeNull()
-    expect(vkDeepLink('@my_group', 'vk_instagram_launch', 'instagram')).toBe('https://vk.me/my_group?ref=vk_instagram_launch&ref_source=instagram')
-    expect(vkDeepLink('123456', 'vk_ads', 'target')).toBe('https://vk.com/write-123456?ref=vk_ads&ref_source=target')
-    expect(vkDeepLink('', 'code', 'source')).toBeNull()
+    expect(vkDeepLink('@my_group', 'vk_instagram_launch')).toBe('https://vk.me/my_group?ref=vk_instagram_launch')
+    expect(vkDeepLink('123456', 'vk_ads')).toBe('https://vk.com/write-123456?ref=vk_ads')
+    expect(vkDeepLink('https://vk.com/club123456', 'blogger_sep')).toBe('https://vk.com/write-123456?ref=blogger_sep')
+    expect(vkDeepLink('https://vk.com/my_group', 'launch')).toBe('https://vk.me/my_group?ref=launch')
+    expect(vkDeepLink('', 'code')).toBeNull()
   })
 
   it('считает старую tracking link без platform ссылкой Telegram', () => {
     const source = freshDemoFunnel()
     const parsed = parseAndMigrateFunnelDocument(JSON.parse(JSON.stringify(source)))
     expect(parsed.success).toBe(true)
-    if (parsed.success) expect(parsed.document.bot.trackingLinks.every((link) => link.platform === 'telegram')).toBe(true)
+    if (parsed.success) {
+      expect(parsed.document.bot.trackingLinks.every((link) => link.platform === 'telegram')).toBe(true)
+      expect(parsed.document.bot.trackingLinks.every((link) => link.locked === true)).toBe(true)
+    }
   })
 
   it('новая версия сбрасывает только статистику', () => {
