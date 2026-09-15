@@ -54,21 +54,49 @@ export class AdminRepository {
       const funnelId = funnel.rows[0]!.id
       let candidate = document
       if (options.autoVersion) {
-        const latest = await client.query<{ id: string; version: number; raw_document: FunnelDocument }>(`
+        // Hidden versions are intentionally removed from the visible history.
+        // They must never be reused by editor publish deduplication.
+        const latestVisible = await client.query<{
+          id: string
+          version: number
+          raw_document: FunnelDocument
+        }>(`
           SELECT id, version, raw_document
+          FROM funnel_versions
+          WHERE funnel_id = $1
+            AND hidden_at IS NULL
+          ORDER BY version DESC
+          LIMIT 1
+        `, [funnelId])
+
+        const previousVisible = latestVisible.rows[0]
+
+        if (
+          previousVisible
+          && semanticDocumentHash(previousVisible.raw_document) === semanticDocumentHash(document)
+        ) {
+          return {
+            versionId: previousVisible.id,
+            funnelId,
+            created: false,
+            document: previousVisible.raw_document,
+          }
+        }
+
+        // Version numbers are never reused, even when an older version is hidden.
+        const latestNumber = await client.query<{ version: number }>(`
+          SELECT version
           FROM funnel_versions
           WHERE funnel_id = $1
           ORDER BY version DESC
           LIMIT 1
         `, [funnelId])
-        const previous = latest.rows[0]
-        if (previous && semanticDocumentHash(previous.raw_document) === semanticDocumentHash(document)) {
-          return { versionId: previous.id, funnelId, created: false, document: previous.raw_document }
-        }
-        const nextVersion = (previous?.version ?? 0) + 1
+
+        const nextVersion = (latestNumber.rows[0]?.version ?? 0) + 1
+
         candidate = structuredClone(document)
         candidate.funnel.version = nextVersion
-        candidate.funnel.parentVersion = previous?.version
+        candidate.funnel.parentVersion = previousVisible?.version
         candidate.funnel.status = 'draft'
         candidate.funnel.updatedAt = new Date().toISOString()
         candidate.analytics = emptyAnalytics(nextVersion)
