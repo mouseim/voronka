@@ -330,6 +330,91 @@ describe('PostgreSQL import/publish/version integration', () => {
     }
   })
 
+  it('публикует без активации, хранит emoji и безопасно скрывает неактивную версию', async () => {
+    const database = await PGlite.create({ extensions: { pgcrypto } })
+    const pool = pglitePool(database)
+
+    try {
+      await applyMigrations(database)
+
+      const store = new PostgresRuntimeStore(pool)
+      const admin = new AdminRepository(pool, store)
+
+      const firstDocument = await loadDemo()
+      const first = await admin.importDocument(firstDocument, '1')
+
+      await configureAndBind(admin, first.versionId, firstDocument)
+
+      expect((await admin.publish(first.versionId, '1')).published).toBe(true)
+      await admin.setDefault(first.funnelId, '1')
+      expect((await store.resolveVersion())?.version.id).toBe(first.versionId)
+
+      const secondDocument = structuredClone(firstDocument)
+      secondDocument.funnel.version = 2
+      secondDocument.funnel.parentVersion = 1
+      secondDocument.funnel.status = 'draft'
+      secondDocument.funnel.updatedAt = new Date().toISOString()
+
+      const second = await admin.importDocument(secondDocument, '1')
+      await configureAndBind(admin, second.versionId, secondDocument)
+
+      expect((await admin.publish(second.versionId, '1', false)).published).toBe(true)
+
+      // Без активации новые старты всё ещё используют v1.
+      expect((await store.resolveVersion())?.version.id).toBe(first.versionId)
+
+      await admin.setVersionEmoji(second.versionId, '🧪', '1')
+
+      expect(await admin.listVersions(first.funnelId)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: second.versionId,
+            emoji: '🧪',
+            active: false,
+          }),
+        ]),
+      )
+
+      expect(await admin.listEditorFunnelVersions(firstDocument.funnel.id)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            version: 2,
+            emoji: '🧪',
+            active: false,
+          }),
+        ]),
+      )
+
+      // Активную версию скрыть нельзя.
+      await expect(admin.hideVersion(first.versionId, '1'))
+        .rejects.toThrow('ACTIVE_VERSION_CANNOT_DELETE')
+
+      // Неактивную можно скрыть, но физически runtime-версия остаётся.
+      await admin.hideVersion(second.versionId, '1')
+
+      expect(
+        (await admin.listVersions(first.funnelId)).some(
+          (row) => row.id === second.versionId,
+        ),
+      ).toBe(false)
+
+      expect(
+        await admin.getEditorFunnelVersionAnalytics(firstDocument.funnel.id, 2),
+      ).toBeNull()
+
+      expect(await store.getVersion(second.versionId)).not.toBeNull()
+
+      // Другой source id с тем же funnel_key должен дать понятный конфликт.
+      const collision = structuredClone(firstDocument)
+      collision.funnel.id = 'another-source-with-the-same-key'
+
+      await expect(admin.importDocument(collision, '1'))
+        .rejects.toThrow('FUNNEL_KEY_ALREADY_EXISTS')
+    } finally {
+      await database.close()
+    }
+  })
+
   it('исключает opted-out и background-blocked пользователей из рассылки', async () => {
     const database = await PGlite.create({ extensions: { pgcrypto } })
     const pool = pglitePool(database)

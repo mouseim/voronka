@@ -36,6 +36,13 @@ export class AdminRepository {
     return this.runtimeStore.transaction(async (client) => {
       let funnel = await client.query<{ id: string }>('SELECT id FROM funnels WHERE source_funnel_id = $1 FOR UPDATE', [document.funnel.id])
       if (!funnel.rows[0]) {
+        const keyOwner = await client.query<{ source_funnel_id: string }>(
+          'SELECT source_funnel_id FROM funnels WHERE funnel_key = $1 LIMIT 1',
+          [document.funnel.key],
+        )
+
+        if (keyOwner.rows[0]) throw new Error('FUNNEL_KEY_ALREADY_EXISTS')
+
         funnel = await client.query<{ id: string }>(`
           INSERT INTO funnels(funnel_key, source_funnel_id, name)
           VALUES ($1, $2, $3)
@@ -153,11 +160,11 @@ export class AdminRepository {
     })
   }
 
-  async publishFromEditor(document: FunnelDocument, adminTelegramId: string): Promise<EditorPublishResult> {
+  async publishFromEditor(document: FunnelDocument, adminTelegramId: string, activate = true): Promise<EditorPublishResult> {
     const imported = await this.importDocument(document, adminTelegramId, { autoVersion: true })
-    const result = await this.publish(imported.versionId, adminTelegramId)
+    const result = await this.publish(imported.versionId, adminTelegramId, activate)
     if (!result.published) return { ...imported, published: false, issues: result.issues }
-    await this.setDefault(imported.funnelId, adminTelegramId)
+    if (activate) await this.setDefault(imported.funnelId, adminTelegramId)
     const publishedDocument = structuredClone(imported.document)
     publishedDocument.funnel.status = 'published'
     return { ...imported, document: publishedDocument, published: true, issues: result.issues }
@@ -211,30 +218,50 @@ export class AdminRepository {
     return issues
   }
 
-  async publish(versionId: string, adminTelegramId: string, allowPlaceholders = false) {
-    const issues = await this.publicationIssues(versionId, allowPlaceholders)
+  async publish(versionId: string, adminTelegramId: string, activate = true) {
+    const issues = await this.publicationIssues(versionId, false)
     const errors = issues.filter((issue) => issue.severity === 'error')
     if (errors.length) return { published: false as const, issues }
+
     await this.runtimeStore.transaction(async (client) => {
-      const target = await client.query<{ funnel_id: string }>('SELECT funnel_id FROM funnel_versions WHERE id = $1 FOR UPDATE', [versionId])
+      const target = await client.query<{ funnel_id: string }>(
+        'SELECT funnel_id FROM funnel_versions WHERE id = $1 AND hidden_at IS NULL FOR UPDATE',
+        [versionId],
+      )
       if (!target.rows[0]) throw new Error('VERSION_NOT_FOUND')
       const funnelId = target.rows[0].funnel_id
-      await client.query(`
-        UPDATE funnel_versions SET status = 'archived', archived_at = COALESCE(archived_at, now())
-        WHERE id = (SELECT active_version_id FROM funnels WHERE id = $1) AND id <> $2
-      `, [funnelId, versionId])
+
+      if (activate) {
+        await client.query(`
+          UPDATE funnel_versions
+          SET status = 'archived', archived_at = COALESCE(archived_at, now())
+          WHERE id = (SELECT active_version_id FROM funnels WHERE id = $1)
+            AND id <> $2
+        `, [funnelId, versionId])
+      }
+
       await client.query(`
         UPDATE funnel_versions
-        SET status = 'published', published_at = COALESCE(published_at, now()),
-            archived_at = NULL, allow_placeholders = $2
+        SET status = 'published',
+            published_at = COALESCE(published_at, now()),
+            archived_at = NULL,
+            allow_placeholders = false
         WHERE id = $1
-      `, [versionId, allowPlaceholders])
-      await client.query('UPDATE funnels SET active_version_id = $2, updated_at = now() WHERE id = $1', [funnelId, versionId])
+      `, [versionId])
+
+      if (activate) {
+        await client.query(
+          'UPDATE funnels SET active_version_id = $2, updated_at = now(), archived_at = NULL WHERE id = $1',
+          [funnelId, versionId],
+        )
+      }
+
       await client.query(`
         INSERT INTO admin_audit_log(admin_telegram_id, action, funnel_id, version_id, details)
         VALUES ($1, 'publish_version', $2, $3, $4)
-      `, [adminTelegramId, funnelId, versionId, JSON.stringify({ allowPlaceholders })])
+      `, [adminTelegramId, funnelId, versionId, JSON.stringify({ activate })])
     })
+
     return { published: true as const, issues }
   }
 
@@ -252,7 +279,7 @@ export class AdminRepository {
 
   async rollback(funnelId: string, versionId: string, adminTelegramId: string) {
     await this.runtimeStore.transaction(async (client) => {
-      const target = await client.query('SELECT 1 FROM funnel_versions WHERE id = $1 AND funnel_id = $2 FOR UPDATE', [versionId, funnelId])
+      const target = await client.query('SELECT 1 FROM funnel_versions WHERE id = $1 AND funnel_id = $2 AND hidden_at IS NULL FOR UPDATE', [versionId, funnelId])
       if (!target.rowCount) throw new Error('VERSION_NOT_FOUND')
       await client.query(`UPDATE funnel_versions SET status = 'archived' WHERE id = (SELECT active_version_id FROM funnels WHERE id = $1) AND id <> $2`, [funnelId, versionId])
       await client.query(`UPDATE funnel_versions SET status = 'published', archived_at = NULL WHERE id = $1`, [versionId])
@@ -355,7 +382,7 @@ export class AdminRepository {
              count(DISTINCT s.id) FILTER (WHERE s.status IN ('active', 'waiting'))::int AS active_sessions
       FROM funnels f
       LEFT JOIN funnel_versions active ON active.id = f.active_version_id
-      LEFT JOIN funnel_versions fv ON fv.funnel_id = f.id
+      LEFT JOIN funnel_versions fv ON fv.funnel_id = f.id AND fv.hidden_at IS NULL
       LEFT JOIN sessions s ON s.funnel_id = f.id
       WHERE f.archived_at IS NULL
       GROUP BY f.id, active.version
@@ -411,12 +438,15 @@ export class AdminRepository {
       status: string
       published_at: Date | string
       active: boolean
+      emoji: string | null
     }>(`
-      SELECT fv.version, fv.status, fv.published_at, f.active_version_id = fv.id AS active
+      SELECT fv.version, fv.status, fv.published_at, fv.emoji,
+             f.active_version_id = fv.id AS active
       FROM funnel_versions fv
       JOIN funnels f ON f.id = fv.funnel_id
       WHERE fv.funnel_id = $1
         AND fv.published_at IS NOT NULL
+        AND fv.hidden_at IS NULL
       ORDER BY fv.version DESC
     `, [funnel.rows[0].id])
     return result.rows.map((row) => ({
@@ -424,6 +454,7 @@ export class AdminRepository {
       status: row.status,
       publishedAt: new Date(row.published_at).toISOString(),
       active: row.active,
+      emoji: row.emoji,
     }))
   }
 
@@ -436,6 +467,7 @@ export class AdminRepository {
         AND f.archived_at IS NULL
         AND fv.version = $2
         AND fv.published_at IS NOT NULL
+        AND fv.hidden_at IS NULL
     `, [sourceFunnelId, version])
     const row = result.rows[0]
     return row ? buildAnalyticsSnapshot(this.pool, row.id) : null
@@ -532,13 +564,17 @@ export class AdminRepository {
   async listVersions(funnelId: string) {
     const result = await this.pool.query<VersionListRow>(`
       SELECT fv.id, fv.version, fv.status, fv.content_hash, fv.imported_at, fv.published_at,
+             fv.emoji,
+             f.active_version_id = fv.id AS active,
              count(DISTINCT s.id) FILTER (WHERE s.status IN ('active', 'waiting'))::int AS active_sessions,
              count(DISTINCT b.asset_id) FILTER (WHERE b.platform = 'telegram' AND b.resource_id IS NULL)::int AS missing_media
       FROM funnel_versions fv
+      JOIN funnels f ON f.id = fv.funnel_id
       LEFT JOIN sessions s ON s.version_id = fv.id
       LEFT JOIN version_media_bindings b ON b.version_id = fv.id
       WHERE fv.funnel_id = $1
-      GROUP BY fv.id
+        AND fv.hidden_at IS NULL
+      GROUP BY fv.id, f.active_version_id
       ORDER BY fv.version DESC
     `, [funnelId])
     return result.rows
@@ -548,12 +584,76 @@ export class AdminRepository {
     const result = await this.pool.query<VersionDetailsRow>(`
       SELECT fv.id, fv.funnel_id, f.name AS funnel_name, fv.version, fv.status,
              fv.schema_version, fv.allow_placeholders, fv.imported_at, fv.published_at,
+             fv.emoji,
              f.default_for_bot, f.active_version_id = fv.id AS active
       FROM funnel_versions fv
       JOIN funnels f ON f.id = fv.funnel_id
       WHERE fv.id = $1
+        AND fv.hidden_at IS NULL
     `, [versionId])
     return result.rows[0] ?? null
+  }
+
+  async setVersionEmoji(versionId: string, emoji: string | null, adminTelegramId: string) {
+    const normalized = emoji?.trim() || null
+    if (normalized && Array.from(normalized).length > 8) throw new Error('EMOJI_TOO_LONG')
+
+    const result = await this.pool.query<{ funnel_id: string }>(`
+      UPDATE funnel_versions
+      SET emoji = $2
+      WHERE id = $1 AND hidden_at IS NULL
+      RETURNING funnel_id
+    `, [versionId, normalized])
+
+    if (!result.rows[0]) throw new Error('VERSION_NOT_FOUND')
+
+    await this.pool.query(`
+      INSERT INTO admin_audit_log(admin_telegram_id, action, funnel_id, version_id, details)
+      VALUES ($1, 'set_version_emoji', $2, $3, $4)
+    `, [adminTelegramId, result.rows[0].funnel_id, versionId, JSON.stringify({ emoji: normalized })])
+  }
+
+  async hideVersion(versionId: string, adminTelegramId: string) {
+    return this.runtimeStore.transaction(async (client) => {
+      const result = await client.query<{
+        funnel_id: string
+        active: boolean
+      }>(`
+        SELECT fv.funnel_id, f.active_version_id = fv.id AS active
+        FROM funnel_versions fv
+        JOIN funnels f ON f.id = fv.funnel_id
+        WHERE fv.id = $1 AND fv.hidden_at IS NULL
+        FOR UPDATE OF fv, f
+      `, [versionId])
+
+      const version = result.rows[0]
+      if (!version) throw new Error('VERSION_NOT_FOUND')
+      if (version.active) throw new Error('ACTIVE_VERSION_CANNOT_DELETE')
+
+      await client.query(
+        'UPDATE funnel_versions SET hidden_at = now() WHERE id = $1',
+        [versionId],
+      )
+
+      const remaining = await client.query<{ count: string }>(
+        'SELECT count(*)::text AS count FROM funnel_versions WHERE funnel_id = $1 AND hidden_at IS NULL',
+        [version.funnel_id],
+      )
+
+      if (Number(remaining.rows[0]?.count ?? 0) === 0) {
+        await client.query(
+          'UPDATE funnels SET archived_at = now(), default_for_bot = false WHERE id = $1 AND active_version_id IS NULL',
+          [version.funnel_id],
+        )
+      }
+
+      await client.query(`
+        INSERT INTO admin_audit_log(admin_telegram_id, action, funnel_id, version_id)
+        VALUES ($1, 'hide_version', $2, $3)
+      `, [adminTelegramId, version.funnel_id, versionId])
+
+      return { funnelId: version.funnel_id }
+    })
   }
 
   async listMedia(versionId: string) {
@@ -822,6 +922,8 @@ interface VersionListRow extends QueryResultRow {
   published_at: Date | null
   active_sessions: number
   missing_media: number
+  emoji: string | null
+  active: boolean
 }
 
 interface VersionDetailsRow extends QueryResultRow {
@@ -836,6 +938,7 @@ interface VersionDetailsRow extends QueryResultRow {
   published_at: Date | null
   default_for_bot: boolean
   active: boolean
+  emoji: string | null
 }
 
 interface MediaListRow extends QueryResultRow {

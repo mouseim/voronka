@@ -10,6 +10,12 @@ import { toVkKeyboard } from '../vk/transport'
 
 type PrintTarget = 'tg' | 'vk' | 'all'
 type PrintButton = { text: string; url: string }
+
+type AdminButton = {
+  text: string
+  action: AdminAction
+  style?: 'success' | 'danger' | 'primary'
+}
 const VERSION_PAGE_SIZE = 10
 
 type AdminAction =
@@ -18,7 +24,12 @@ type AdminAction =
   | { type: 'versions'; funnelId: string; page?: number }
   | { type: 'version'; versionId: string }
   | { type: 'validate'; versionId: string }
-  | { type: 'publish'; versionId: string; placeholders: boolean }
+  | { type: 'publish'; versionId: string; activate: boolean }
+  | { type: 'publish_options'; versionId: string }
+  | { type: 'emoji_menu'; versionId: string }
+  | { type: 'set_emoji'; versionId: string; emoji: string | null }
+  | { type: 'delete_version_confirm'; versionId: string }
+  | { type: 'delete_version'; versionId: string }
   | { type: 'set_default'; funnelId: string }
   | { type: 'rollback'; funnelId: string; versionId: string }
   | { type: 'media'; versionId: string }
@@ -281,7 +292,7 @@ export class AdminController {
     return true
   }
 
-  private async execute(ctx: Context, adminId: string, action: AdminAction) {
+  private async execute(ctx: Context, adminId: string, action: AdminAction): Promise<void> {
     if (action.type === 'main') return this.open(ctx)
     if (action.type === 'funnels') {
       const rows = await this.repository.listFunnels()
@@ -302,7 +313,7 @@ export class AdminController {
       const page = Math.min(pageCount - 1, Math.max(0, Math.trunc(action.page ?? 0)))
       const visibleRows = rows.slice(page * VERSION_PAGE_SIZE, (page + 1) * VERSION_PAGE_SIZE)
       const keyboardRows: Array<Array<{ text: string; action: AdminAction }>> = visibleRows.map((row) => [{
-        text: `v${row.version} — ${row.status}`,
+        text: `${row.emoji ? `${row.emoji} ` : ''}v${row.version} — ${row.active ? '🟢' : '🔴'}`,
         action: { type: 'version', versionId: row.id },
       }])
       if (pageCount > 1) {
@@ -313,7 +324,7 @@ export class AdminController {
       }
       keyboardRows.push([{ text: '← К воронкам', action: { type: 'funnels' } }])
       await ctx.reply(rows.length ? [`Версии · страница ${page + 1}/${pageCount}`, '', ...visibleRows.map((row) =>
-        `v${row.version} · ${row.status} · сессий ${row.active_sessions} · файлов не хватает ${row.missing_media}`,
+        `${row.emoji ? `${row.emoji} ` : ''}v${row.version} · ${row.active ? '🟢 Активно' : '🔴 Неактивно'} · сессий ${row.active_sessions} · файлов не хватает ${row.missing_media}`,
       )].join('\n') : 'Версий нет.', { reply_markup: this.keyboard(adminId, keyboardRows) })
       return
     }
@@ -321,10 +332,10 @@ export class AdminController {
       const details = await this.repository.versionDetails(action.versionId)
       if (!details) throw new Error('VERSION_NOT_FOUND')
       await ctx.reply([
-        `${details.funnel_name} · v${details.version}`,
+        `${details.emoji ? `${details.emoji} ` : ''}${details.funnel_name} · v${details.version}`,
+        details.active ? '🟢 Активно' : '🔴 Неактивно',
         `Формат: ${details.schema_version}`,
-        `Статус: ${details.status}${details.active ? ' · активная' : ''}${details.default_for_bot ? ' · default' : ''}`,
-        `Заглушки: ${details.allow_placeholders ? 'разрешены' : 'нет'}`,
+        `Состояние: ${details.status}${details.default_for_bot ? ' · default' : ''}`,
         `ID: ${details.id}`,
       ].join('\n'), {
         reply_markup: this.versionKeyboard(adminId, details.id, details.funnel_id, details.active, details.default_for_bot),
@@ -338,11 +349,94 @@ export class AdminController {
       ]) })
       return
     }
+    if (action.type === 'publish_options') {
+      await ctx.reply('Как опубликовать эту версию?', {
+        reply_markup: this.keyboard(adminId, [
+          [{
+            text: '🟢 Опубликовать и сделать активной',
+            action: { type: 'publish', versionId: action.versionId, activate: true },
+            style: 'success',
+          }],
+          [{
+            text: 'Опубликовать без активации',
+            action: { type: 'publish', versionId: action.versionId, activate: false },
+          }],
+          [{ text: '← К версии', action: { type: 'version', versionId: action.versionId } }],
+        ]),
+      })
+      return
+    }
+
     if (action.type === 'publish') {
-      const result = await this.repository.publish(action.versionId, adminId, action.placeholders)
+      const result = await this.repository.publish(action.versionId, adminId, action.activate)
       await ctx.reply(result.published
-        ? `Версия опубликована${action.placeholders ? ' с явно разрешёнными заглушками' : ''}. Новые старты пойдут на неё.`
+        ? action.activate
+          ? 'Версия опубликована и сделана активной. Новые старты пойдут на неё.'
+          : 'Версия опубликована без активации. Текущая активная версия не изменилась.'
         : `Публикация заблокирована:\n${formatIssues(result.issues)}`)
+      return
+    }
+
+    if (action.type === 'emoji_menu') {
+      const emojis = ['⭐️', '🏆', '🧪', '🚀', '✅', '⚠️', '🔥', '💎']
+      await ctx.reply('Выберите эмоджи версии:', {
+        reply_markup: this.keyboard(adminId, [
+          emojis.slice(0, 4).map((emoji) => ({
+            text: emoji,
+            action: { type: 'set_emoji' as const, versionId: action.versionId, emoji },
+          })),
+          emojis.slice(4).map((emoji) => ({
+            text: emoji,
+            action: { type: 'set_emoji' as const, versionId: action.versionId, emoji },
+          })),
+          [{
+            text: 'Без эмоджи',
+            action: { type: 'set_emoji' as const, versionId: action.versionId, emoji: null },
+          }],
+          [{ text: '← К версии', action: { type: 'version' as const, versionId: action.versionId } }],
+        ]),
+      })
+      return
+    }
+
+    if (action.type === 'set_emoji') {
+      await this.repository.setVersionEmoji(action.versionId, action.emoji, adminId)
+      await ctx.reply(action.emoji ? `Эмоджи версии: ${action.emoji}` : 'Эмоджи версии удалён.')
+      return this.execute(ctx, adminId, { type: 'version', versionId: action.versionId })
+    }
+
+    if (action.type === 'delete_version_confirm') {
+      const details = await this.repository.versionDetails(action.versionId)
+      if (!details) throw new Error('VERSION_NOT_FOUND')
+
+      if (details.active) {
+        await ctx.reply('Активную версию удалить нельзя. Сначала сделайте активной другую версию.')
+        return
+      }
+
+      await ctx.reply(
+        `Удалить v${details.version} из истории? Версия исчезнет из админки и статистики, но старые данные и сессии останутся безопасно сохранены.`,
+        {
+          reply_markup: this.keyboard(adminId, [
+            [{
+              text: '🗑 Да, удалить версию',
+              action: { type: 'delete_version', versionId: action.versionId },
+              style: 'danger',
+            }],
+            [{ text: 'Отмена', action: { type: 'version', versionId: action.versionId } }],
+          ]),
+        },
+      )
+      return
+    }
+
+    if (action.type === 'delete_version') {
+      const result = await this.repository.hideVersion(action.versionId, adminId)
+      await ctx.reply('Версия удалена из истории.', {
+        reply_markup: this.keyboard(adminId, [
+          [{ text: '← К версиям', action: { type: 'versions', funnelId: result.funnelId } }],
+        ]),
+      })
       return
     }
     if (action.type === 'set_default') {
@@ -635,14 +729,42 @@ export class AdminController {
   }
 
   private versionKeyboard(adminId: string, versionId: string, funnelId: string, active: boolean, isDefault: boolean) {
-    const rows: Array<Array<{ text: string; action: AdminAction }>> = [
-      [{ text: 'Проверить', action: { type: 'validate', versionId } }, { text: 'Файлы', action: { type: 'media', versionId } }],
-      [{ text: 'Статистика', action: { type: 'stats', versionId } }, { text: 'Экспорт .funnel', action: { type: 'export', versionId } }],
-      [{ text: 'Опубликовать', action: { type: 'publish', versionId, placeholders: false } }],
-      [{ text: 'Опубликовать с заглушками', action: { type: 'publish', versionId, placeholders: true } }],
+    const rows: AdminButton[][] = [
+      [
+        { text: 'Проверить', action: { type: 'validate', versionId } },
+        { text: 'Файлы', action: { type: 'media', versionId } },
+      ],
+      [
+        { text: 'Статистика', action: { type: 'stats', versionId } },
+        { text: 'Экспорт .funnel', action: { type: 'export', versionId } },
+      ],
+      [{ text: '😀 Изменить эмоджи', action: { type: 'emoji_menu', versionId } }],
     ]
-    if (!isDefault && active) rows.push([{ text: 'Сделать default', action: { type: 'set_default', funnelId } }])
-    if (!active) rows.push([{ text: 'Rollback на эту версию', action: { type: 'rollback', funnelId, versionId } }])
+
+    if (!active) {
+      rows.push([
+        {
+          text: '🟢 Опубликовать',
+          action: { type: 'publish', versionId, activate: true },
+          style: 'success',
+        },
+        {
+          text: '▾',
+          action: { type: 'publish_options', versionId },
+        },
+      ])
+
+      rows.push([{
+        text: '🗑 Удалить версию',
+        action: { type: 'delete_version_confirm', versionId },
+        style: 'danger',
+      }])
+    }
+
+    if (!isDefault && active) {
+      rows.push([{ text: 'Сделать default', action: { type: 'set_default', funnelId } }])
+    }
+
     rows.push([{ text: '← К версиям', action: { type: 'versions', funnelId } }])
     return this.keyboard(adminId, rows)
   }
@@ -656,12 +778,21 @@ export class AdminController {
     ])
   }
 
-  private keyboard(adminId: string, rows: Array<Array<{ text: string; action: AdminAction }>>) {
+  private keyboard(adminId: string, rows: AdminButton[][]) {
     const keyboard = new InlineKeyboard()
+
     rows.forEach((row, rowIndex) => {
-      row.forEach((item) => keyboard.text(item.text, `adm_${this.register(adminId, item.action)}`))
+      row.forEach((item) => {
+        const text = item.style
+          ? { text: item.text, style: item.style }
+          : item.text
+
+        keyboard.text(text, `adm_${this.register(adminId, item.action)}`)
+      })
+
       if (rowIndex < rows.length - 1) keyboard.row()
     })
+
     return keyboard
   }
 

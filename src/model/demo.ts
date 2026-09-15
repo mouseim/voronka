@@ -80,6 +80,25 @@ function buildTest(): FunnelTest {
 
 export function freshDemoFunnel(): FunnelDocument {
   const document = createEmptyFunnel('7 внутренних механизмов')
+
+  // Встроенная демо-воронка должна иметь стабильную серверную identity.
+  // Иначе каждое новое открытие демо создаёт другой source_funnel_id
+  // при том же funnel_key.
+  const generatedStartId = document.funnel.startNodeId
+  document.project.id = 'project_demo_7_internal_mechanisms'
+  document.funnel.id = 'funnel_demo_7_internal_mechanisms'
+  document.funnel.startNodeId = 'start'
+  document.funnel.createdAt = '2026-01-01T00:00:00.000Z'
+  document.funnel.updatedAt = '2026-01-01T00:00:00.000Z'
+
+  const startNode = document.nodes.find((node) => node.id === generatedStartId)
+  if (startNode) startNode.id = 'start'
+
+  const startPosition = document.editor.nodePositions[generatedStartId]
+  if (startPosition) {
+    document.editor.nodePositions.start = startPosition
+    delete document.editor.nodePositions[generatedStartId]
+  }
   document.project.name = 'Психологическая диагностика'
   document.funnel.description = 'Демонстрационная Telegram-воронка с ветками, тестом, заявкой и продуктом.'
   document.bot.displayName = 'Диагностика механизмов'

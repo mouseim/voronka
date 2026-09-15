@@ -103,7 +103,7 @@ export function createHttpServer(
     }
   })
 
-  app.post<{ Body: unknown }>('/admin/editor/publish', async (request, reply) => {
+  app.post<{ Body: unknown; Querystring: { activate?: string } }>('/admin/editor/publish', async (request, reply) => {
     if (!paymentDependencies?.adminRepository) return reply.code(503).send({
       error: 'publishing_unavailable',
       message: 'Публикация из конструктора сейчас недоступна.',
@@ -113,6 +113,8 @@ export function createHttpServer(
       error: 'administrator_unavailable',
       message: 'На сервере не настроен администратор для журнала публикаций.',
     })
+    const activate = request.query.activate !== 'false' && request.query.activate !== '0'
+
     const parsed = parseAndMigrateFunnelDocument(request.body)
     if (!parsed.success) return reply.code(400).send({
       error: 'invalid_document',
@@ -126,7 +128,7 @@ export function createHttpServer(
       issues: documentIssues,
     })
     try {
-      const result = await paymentDependencies.adminRepository.publishFromEditor(parsed.document, adminId)
+      const result = await paymentDependencies.adminRepository.publishFromEditor(parsed.document, adminId, activate)
       if (!result.published) return reply.code(422).send({
         error: 'publication_blocked',
         message: 'Исправьте ошибки перед публикацией.',
@@ -142,6 +144,20 @@ export function createHttpServer(
         issues: result.issues,
       }
     } catch (error) {
+      const databaseError = error as { code?: string; constraint?: string }
+      const funnelKeyConflict = (
+        error instanceof Error && error.message === 'FUNNEL_KEY_ALREADY_EXISTS'
+      ) || (
+        databaseError.code === '23505' && databaseError.constraint === 'funnels_funnel_key_key'
+      )
+
+      if (funnelKeyConflict) {
+        return reply.code(409).send({
+          error: 'funnel_key_conflict',
+          message: 'На сервере уже существует другая воронка с таким техническим ключом. Переименуйте воронку или удалите конфликтующую черновую версию.',
+        })
+      }
+
       request.log.error({ err: error }, 'Не удалось опубликовать воронку из конструктора')
       return reply.code(500).send({
         error: 'publication_failed',

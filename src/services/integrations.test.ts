@@ -28,7 +28,7 @@ describe('editor runtime integration', () => {
     expect(localStorage.getItem('voronka.runtimeUrl')).toBe('https://runtime.example')
     expect(localStorage.getItem('voronka.adminToken')).toBeNull()
     expect(sessionStorage.getItem('voronka.adminToken')).toBe('private-admin-token')
-    expect(fetchMock).toHaveBeenCalledWith('https://runtime.example/admin/editor/publish', expect.objectContaining({
+    expect(fetchMock).toHaveBeenCalledWith('https://runtime.example/admin/editor/publish?activate=true', expect.objectContaining({
       method: 'POST',
       headers: expect.objectContaining({ Authorization: 'Bearer private-admin-token' }),
     }))

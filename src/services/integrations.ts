@@ -29,6 +29,7 @@ export interface ServerFunnelVersion {
   status: string
   publishedAt: string
   active: boolean
+  emoji: string | null
 }
 
 export class RuntimeRequestError extends Error {
@@ -55,8 +56,8 @@ export function setIntegrationConnection(next: { runtimeUrl: string; adminToken:
   if (typeof browserStorage?.dispatchEvent === 'function') browserStorage.dispatchEvent(new Event('voronka:connection-changed'))
 }
 
-export async function publishFunnel(document: import('../model/types').FunnelDocument) {
-  return request<PublishFunnelResponse>('/admin/editor/publish', {
+export async function publishFunnel(document: import('../model/types').FunnelDocument, activate = true) {
+  return request<PublishFunnelResponse>(`/admin/editor/publish?activate=${activate ? 'true' : 'false'}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(document),
   })
 }

@@ -96,6 +96,7 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave, onPu
   const [issues, setIssues] = useState<ValidationIssue[] | null>(null)
   const [preview, setPreview] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
+  const [publishMenuOpen, setPublishMenuOpen] = useState(false)
   const [mobilePanel, setMobilePanel] = useState<'library' | 'properties' | null>(null)
   const [nodeSearch, setNodeSearch] = useState('')
   const [selectionArmed, setSelectionArmed] = useState(false)
@@ -162,7 +163,8 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave, onPu
     setCenter(position.x + 100, position.y + 40, { zoom: 1, duration: 350 })
   }
   const check = () => setIssues(validateFunnel(document))
-  const publishCurrent = async () => {
+  const publishCurrent = async (activate = true) => {
+    setPublishMenuOpen(false)
     const found = validateFunnel(document)
     if (found.some((issue) => issue.severity === 'error')) { setIssues(found); return }
     const connection = integrationConnection()
@@ -172,13 +174,15 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave, onPu
     }
     setPublication({ state: 'publishing' })
     try {
-      const result = await publishFunnel(document)
+      const result = await publishFunnel(document, activate)
       await onSave(result.document)
       setDocument(result.document)
       await onPublished()
       setPublication({
         state: 'success',
-        message: `✓ Готово. Опубликовано в Telegram и VK: версия ${result.version} для новых пользователей.${result.unchanged ? ' Содержимое не изменилось, новая версия не создавалась.' : ''}`,
+        message: activate
+          ? `✓ Готово. Версия ${result.version} опубликована и сделана активной для новых пользователей.${result.unchanged ? ' Содержимое не изменилось, новая версия не создавалась.' : ''}`
+          : `✓ Готово. Версия ${result.version} опубликована без активации. Текущая активная версия не изменилась.${result.unchanged ? ' Содержимое не изменилось, новая версия не создавалась.' : ''}`,
       })
     } catch (error) {
       if (error instanceof RuntimeRequestError && error.issues.length) setIssues(error.issues)
@@ -232,7 +236,45 @@ function EditorCanvas({ document, onBack, onAnalytics, onWorkspace, onSave, onPu
       <button className="header-action mobile-only" aria-label="Настройки этапа" onClick={() => setMobilePanel('properties')}><PanelRight size={18} /><span>Настройки</span></button>
       <button className="header-action" onClick={check}><CheckCircle2 size={18} /><span>Проверить</span></button>
       <button className="header-action" onClick={() => setPreview(true)}><Eye size={18} /><span>Предпросмотр</span></button>
-      <button className="button primary export-button" aria-label="Опубликовать в Telegram и VK" disabled={publication.state === 'publishing'} onClick={() => void publishCurrent()}><Rocket size={17} /><span>{publication.state === 'publishing' ? 'Публикуем…' : 'Опубликовать'}</span></button>
+        <div className="export-menu-wrap">
+          <div style={{ display: 'flex', alignItems: 'stretch' }}>
+            <button
+              className="button primary export-button"
+              aria-label="Опубликовать и сделать активной"
+              disabled={publication.state === 'publishing'}
+              onClick={() => void publishCurrent(true)}
+            >
+              <Rocket size={17} />
+              <span>{publication.state === 'publishing' ? 'Публикуем…' : 'Опубликовать'}</span>
+            </button>
+
+            <button
+              className="button primary"
+              style={{ paddingInline: 10, marginLeft: 2 }}
+              aria-label="Варианты публикации"
+              disabled={publication.state === 'publishing'}
+              onClick={() => setPublishMenuOpen((open) => !open)}
+            >
+              ▾
+            </button>
+          </div>
+
+          {publishMenuOpen && <div className="export-menu more-menu">
+            <button onClick={() => void publishCurrent(true)}>
+              <span>
+                <strong>Опубликовать и сделать активной</strong>
+                <small>Новые пользователи сразу пойдут на эту версию</small>
+              </span>
+            </button>
+
+            <button onClick={() => void publishCurrent(false)}>
+              <span>
+                <strong>Опубликовать без активации</strong>
+                <small>Текущая активная версия не изменится</small>
+              </span>
+            </button>
+          </div>}
+        </div>
       <div className="export-menu-wrap"><button className="icon-button bordered" onClick={() => setMoreOpen(!moreOpen)} aria-label="Ещё"><Ellipsis size={19} /></button>{moreOpen && <div className="export-menu more-menu"><button onClick={() => { setMoreOpen(false); downloadFunnel(document, `backup-v${document.funnel.version}`) }}><Download size={16} /><span><strong>Резервная копия</strong><small>Текущая версия целиком</small></span></button><label><FileImage size={16} /><span><strong>Импортировать другой файл</strong><small>Формат 3.0 и автоматический импорт 2.0</small></span><input type="file" accept=".funnel,.json" hidden onChange={(event) => importAnother(event.target.files?.[0])} /></label><button onClick={() => { setMoreOpen(false); alert(`Формат файла: ${document.schemaVersion}\nВерсия воронки: ${document.funnel.version}\nБлоков: ${document.nodes.length}\nСвязей: ${document.edges.length}`) }}><CheckCircle2 size={16} /><span><strong>Сведения о файле</strong><small>Версия формата и состав</small></span></button></div>}</div>
     </header>
     {publication.state !== 'idle' && <div className={`publish-status ${publication.state}`}><span>{publication.message ?? 'Проверяем и публикуем общую версию для Telegram и VK…'}</span>{publication.state === 'error' && (!integrationConnection().runtimeUrl || !integrationConnection().adminToken) && <button className="button" onClick={() => onWorkspace('integrations')}>Открыть интеграции</button>}</div>}

@@ -79,7 +79,7 @@ describe('payment HTTP boundary', () => {
       expect(response.statusCode).toBe(200)
       expect(response.headers['access-control-allow-origin']).toBe('http://localhost:5173')
       expect(response.json()).toMatchObject({ published: true, created: true, unchanged: false, version: 4 })
-      expect(publishFromEditor).toHaveBeenCalledWith(expect.objectContaining({ documentType: 'funnel' }), '1')
+      expect(publishFromEditor).toHaveBeenCalledWith(expect.objectContaining({ documentType: 'funnel' }), '1', true)
       expect(response.body).not.toContain('secretKey')
     } finally { await app.close() }
   })
